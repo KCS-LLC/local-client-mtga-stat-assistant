@@ -91,4 +91,20 @@ pub enum GameEvent {
         seat_id: u8,
         roll_value: u32,
     },
+    /// Commander cast from the command zone; tax = extra mana cost above base
+    CommanderCast {
+        card_id: u32,
+        seat_id: u8,
+        cast_count: u8,
+        tax: u8,
+    },
+    /// Commander moved back to the command zone (died or exiled, player chose command zone)
+    CommanderReturned {
+        card_id: u32,
+        seat_id: u8,
+    },
+    /// A player's library was shuffled; instance IDs for that library are now stale
+    LibraryShuffle {
+        seat_id: u8,
+    },
 }
