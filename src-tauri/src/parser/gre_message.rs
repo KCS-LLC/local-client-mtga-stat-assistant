@@ -16,6 +16,8 @@ pub struct GreParser {
     visibility_map: HashMap<u32, String>,
     // Current game number within the match (1-indexed, increments on GameEnded)
     game_number: u8,
+    // Maps commander grpId → number of times cast this match (for tax calculation)
+    commander_casts: HashMap<u32, u8>,
 }
 
 impl GreParser {
@@ -25,6 +27,7 @@ impl GreParser {
             instance_map: HashMap::new(),
             visibility_map: HashMap::new(),
             game_number: 1,
+            commander_casts: HashMap::new(),
         }
     }
 
@@ -33,6 +36,7 @@ impl GreParser {
         self.instance_map.clear();
         self.visibility_map.clear();
         self.game_number = 1;
+        self.commander_casts.clear();
     }
 
     pub fn parse(&mut self, content: &str) -> Vec<GameEvent> {
@@ -169,16 +173,140 @@ impl GreParser {
         }
     }
 
-    fn process_zone_transfers(&self, gs: &Value) -> Vec<GameEvent> {
+    fn process_zone_transfers(&mut self, gs: &Value) -> Vec<GameEvent> {
         let annotations = match gs.get("annotations").and_then(|a| a.as_array()) {
             Some(a) => a,
             None => return vec![],
         };
 
-        annotations
-            .iter()
-            .filter_map(|ann| self.try_zone_transfer(ann))
-            .collect()
+        let mut events = vec![];
+        for ann in annotations {
+            let types = match ann.get("type").and_then(|t| t.as_array()) {
+                Some(t) => t,
+                None => continue,
+            };
+            let type_strs: Vec<&str> = types.iter().filter_map(|t| t.as_str()).collect();
+            if type_strs.contains(&"AnnotationType_ZoneTransfer") {
+                events.extend(self.handle_zone_transfer(ann));
+            } else if type_strs.contains(&"AnnotationType_Shuffle") {
+                events.extend(self.handle_shuffle(ann));
+            }
+        }
+        events
+    }
+
+    fn handle_shuffle(&mut self, ann: &Value) -> Vec<GameEvent> {
+        let details = match ann.get("details").and_then(|d| d.as_array()) {
+            Some(d) => d,
+            None => return vec![],
+        };
+
+        if let Some(old_ids) = details.iter().find_map(|d| {
+            if d.get("key")?.as_str()? == "OldIds" {
+                d.get("valueInt32")?.as_array()
+            } else {
+                None
+            }
+        }) {
+            for id in old_ids {
+                if let Some(id) = id.as_u64() {
+                    self.instance_map.remove(&(id as u32));
+                    self.visibility_map.remove(&(id as u32));
+                }
+            }
+        }
+
+        let seat_id = ann
+            .get("affectedIds")
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first())
+            .and_then(|id| id.as_u64())
+            .unwrap_or(0) as u8;
+
+        vec![GameEvent::LibraryShuffle { seat_id }]
+    }
+
+    fn handle_zone_transfer(&mut self, ann: &Value) -> Vec<GameEvent> {
+        let instance_id = match ann
+            .get("affectedIds")
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first())
+            .and_then(|id| id.as_u64())
+        {
+            Some(id) => id as u32,
+            None => return vec![],
+        };
+
+        let details = match ann.get("details").and_then(|d| d.as_array()) {
+            Some(d) => d,
+            None => return vec![],
+        };
+
+        let src_zone_id = match extract_int_detail(details, "zone_src") {
+            Some(id) => id as u32,
+            None => return vec![],
+        };
+        let dst_zone_id = match extract_int_detail(details, "zone_dest") {
+            Some(id) => id as u32,
+            None => return vec![],
+        };
+
+        let (src_zone_type, owner_seat_id) = match self.zone_map.get(&src_zone_id) {
+            Some(info) => (info.zone_type.clone(), info.owner_seat_id),
+            None => return vec![],
+        };
+        let dst_zone_type = match self.zone_map.get(&dst_zone_id) {
+            Some(info) => info.zone_type.clone(),
+            None => return vec![],
+        };
+
+        let card_id = match self.instance_map.get(&instance_id) {
+            Some(&id) => id,
+            None => return vec![],
+        };
+
+        let face_down = dst_zone_type == "ZoneType_Exile"
+            && self
+                .visibility_map
+                .get(&instance_id)
+                .map(|v| v != "Visibility_Public")
+                .unwrap_or(false);
+
+        let mut events = vec![GameEvent::ZoneChanged {
+            card_id,
+            from_zone: Zone::from_str(&src_zone_type),
+            to_zone: Zone::from_str(&dst_zone_type),
+            owner_seat_id,
+            face_down,
+        }];
+
+        if src_zone_type == "ZoneType_Command" && dst_zone_type == "ZoneType_Stack" {
+            let cast_count = {
+                let entry = self.commander_casts.entry(card_id).or_insert(0);
+                *entry += 1;
+                *entry
+            };
+            let tax = if cast_count > 1 { (cast_count - 1) * 2 } else { 0 };
+            events.push(GameEvent::CommanderCast {
+                card_id,
+                seat_id: owner_seat_id,
+                cast_count,
+                tax,
+            });
+        }
+
+        // Commander return via state-based action: GY/Exile → Command
+        if dst_zone_type == "ZoneType_Command"
+            && (src_zone_type == "ZoneType_Graveyard" || src_zone_type == "ZoneType_Exile")
+            && self.commander_casts.contains_key(&card_id)
+        {
+            events.push(GameEvent::CommanderReturned {
+                card_id,
+                seat_id: owner_seat_id,
+            });
+        }
+
+        events
     }
 
     fn parse_submit_deck(&self, msg: &Value) -> Option<GameEvent> {
@@ -241,47 +369,6 @@ impl GreParser {
         }
     }
 
-    fn try_zone_transfer(&self, ann: &Value) -> Option<GameEvent> {
-        // Only handle ZoneTransfer annotations
-        let types = ann.get("type")?.as_array()?;
-        let is_zone_transfer = types
-            .iter()
-            .any(|t| t.as_str() == Some("AnnotationType_ZoneTransfer"));
-        if !is_zone_transfer {
-            return None;
-        }
-
-        let instance_id = ann.get("affectedIds")?.as_array()?.first()?.as_u64()? as u32;
-        let details = ann.get("details")?.as_array()?;
-
-        let src_zone_id = extract_int_detail(details, "zone_src")? as u32;
-        let dst_zone_id = extract_int_detail(details, "zone_dest")? as u32;
-
-        let src_info = self.zone_map.get(&src_zone_id)?;
-        let dst_info = self.zone_map.get(&dst_zone_id)?;
-
-        let card_id = *self.instance_map.get(&instance_id)?;
-        let owner_seat_id = src_info.owner_seat_id;
-
-        let from_zone = Zone::from_str(&src_info.zone_type);
-        let to_zone = Zone::from_str(&dst_info.zone_type);
-
-        // Face-down: card going to exile with non-public visibility
-        let face_down = matches!(to_zone, Zone::Exile)
-            && self
-                .visibility_map
-                .get(&instance_id)
-                .map(|v| v != "Visibility_Public")
-                .unwrap_or(false);
-
-        Some(GameEvent::ZoneChanged {
-            card_id,
-            from_zone,
-            to_zone,
-            owner_seat_id,
-            face_down,
-        })
-    }
 }
 
 /// Converts a flat card ID array (with duplicates) into a DeckLoaded event.
