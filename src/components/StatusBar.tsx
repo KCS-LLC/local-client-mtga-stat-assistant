@@ -3,11 +3,20 @@ import { invoke } from "@tauri-apps/api/core";
 interface Props {
   mtgaRunning: boolean;
   inMatch: boolean;
+  eventCount: number;
+  lastEventType: string | null;
   theme: "light" | "dark";
   onToggleTheme: () => void;
 }
 
-export function StatusBar({ mtgaRunning, inMatch, theme, onToggleTheme }: Props) {
+export function StatusBar({
+  mtgaRunning,
+  inMatch,
+  eventCount,
+  lastEventType,
+  theme,
+  onToggleTheme,
+}: Props) {
   const status: "red" | "yellow" | "green" = !mtgaRunning
     ? "red"
     : inMatch
@@ -41,14 +50,20 @@ export function StatusBar({ mtgaRunning, inMatch, theme, onToggleTheme }: Props)
           </button>
         )}
       </div>
-      <button
-        type="button"
-        onClick={onToggleTheme}
-        className="text-sm px-2 py-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        aria-label="Toggle theme"
-      >
-        {theme === "dark" ? "Light" : "Dark"}
-      </button>
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-zinc-500 font-mono">
+          events: {eventCount}
+          {lastEventType ? ` · last: ${lastEventType}` : ""}
+        </span>
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          className="text-sm px-2 py-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          aria-label="Toggle theme"
+        >
+          {theme === "dark" ? "Light" : "Dark"}
+        </button>
+      </div>
     </header>
   );
 }

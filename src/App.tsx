@@ -33,6 +33,8 @@ function App() {
       <StatusBar
         mtgaRunning={state.mtgaRunning}
         inMatch={state.inMatch}
+        eventCount={state.eventCount}
+        lastEventType={state.lastEventType}
         theme={theme}
         onToggleTheme={toggle}
       />

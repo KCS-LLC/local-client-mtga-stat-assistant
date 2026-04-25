@@ -14,8 +14,11 @@ export interface MatchState {
   gameNumber: number;
   // Cards seen on opponent's battlefield, grouped by game number
   opponentCards: Map<number, Set<number>>;
-  // grpId → current commander tax
-  commanderTax: Map<number, number>;
+  // seat_id → (grpId → current commander tax)
+  commanderTax: Map<number, Map<number, number>>;
+  // Diagnostic
+  eventCount: number;
+  lastEventType: string | null;
 }
 
 type Action =
@@ -34,6 +37,8 @@ function initial(): MatchState {
     gameNumber: 1,
     opponentCards: new Map(),
     commanderTax: new Map(),
+    eventCount: 0,
+    lastEventType: null,
   };
 }
 
@@ -43,6 +48,12 @@ function reducer(state: MatchState, action: Action): MatchState {
   }
 
   const e = action.event;
+  // Count every event and track last type for diagnostics
+  state = {
+    ...state,
+    eventCount: state.eventCount + 1,
+    lastEventType: e.type,
+  };
   switch (e.type) {
     case "MatchStarted":
       // Frontend doesn't know which player is "us" — backend's event_sink
@@ -84,9 +95,11 @@ function reducer(state: MatchState, action: Action): MatchState {
     }
 
     case "CommanderCast": {
-      const tax = new Map(state.commanderTax);
-      tax.set(e.card_id, e.tax);
-      return { ...state, commanderTax: tax };
+      const bySeat = new Map(state.commanderTax);
+      const seatMap = new Map(bySeat.get(e.seat_id) ?? []);
+      seatMap.set(e.card_id, e.tax);
+      bySeat.set(e.seat_id, seatMap);
+      return { ...state, commanderTax: bySeat };
     }
 
     default:
@@ -99,10 +112,12 @@ export function useMatchState(): MatchState {
 
   useEffect(() => {
     const unlistenStatus = listen<boolean>("mtga_status", (e) => {
+      console.log("[mtga_status]", e.payload);
       dispatch({ type: "mtga_status", running: e.payload });
     });
 
     const unlistenEvent = listen<GameEvent>("game_event", (e) => {
+      console.log("[game_event]", e.payload);
       dispatch({ type: "game_event", event: e.payload });
     });
 

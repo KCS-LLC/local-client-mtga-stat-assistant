@@ -1,4 +1,5 @@
 mod db;
+mod debug_log;
 mod event_sink;
 mod events;
 mod mtga_process;
@@ -64,16 +65,22 @@ fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>) {
         let log_path = default_log_path();
         let mtga_was_running = mtga_process::is_running();
 
+        dlog!("[startup] log path: {:?}", log_path);
+        dlog!("[startup] log exists: {}", log_path.exists());
+        dlog!("[startup] mtga running at startup: {}", mtga_was_running);
+
         let _ = app_handle.emit("mtga_status", mtga_was_running);
 
         if !mtga_was_running {
             loop {
                 thread::sleep(Duration::from_secs(1));
                 if mtga_process::is_running() {
+                    dlog!("[startup] mtga process detected");
                     let _ = app_handle.emit("mtga_status", true);
                     while !log_path.exists() {
                         thread::sleep(Duration::from_millis(500));
                     }
+                    dlog!("[startup] log file ready, starting tailer");
                     break;
                 }
             }
@@ -84,6 +91,10 @@ fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>) {
         } else {
             tailer::StartPosition::Beginning
         };
+        dlog!(
+            "[startup] tailer start position: {}",
+            if mtga_was_running { "End" } else { "Beginning" }
+        );
 
         let (line_tx, line_rx) = mpsc::channel::<String>();
         let (chunk_tx, chunk_rx) = mpsc::channel::<segmenter::Chunk>();
@@ -97,6 +108,7 @@ fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>) {
         let mut sink = EventSink::new();
 
         for event in event_rx {
+            dlog!("[event] {:?}", event);
             // Write to DB
             if let Ok(mut db) = db.lock() {
                 sink.process(&event, &mut db);
@@ -107,9 +119,20 @@ fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>) {
     });
 }
 
+fn default_debug_log_path() -> std::path::PathBuf {
+    let app_data = std::env::var("APPDATA").unwrap_or_default();
+    std::path::Path::new(&app_data)
+        .join("local-client-mtga-stat-assistant")
+        .join("debug.log")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    debug_log::init(default_debug_log_path());
+    dlog!("[startup] app starting");
+
     let db_path = default_db_path();
+    dlog!("[startup] db path: {:?}", db_path);
     let db = Db::open(&db_path).expect("failed to open database");
     let db = Arc::new(Mutex::new(db));
 

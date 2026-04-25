@@ -4,9 +4,38 @@ interface Props {
   state: MatchState;
 }
 
+function CommanderList({
+  tax,
+}: {
+  tax: Map<number, number> | undefined;
+}) {
+  if (!tax || tax.size === 0) return null;
+  return (
+    <div className="mt-4">
+      <h3 className="text-sm font-medium mb-2">Commander</h3>
+      <ul className="text-sm space-y-1">
+        {Array.from(tax.entries()).map(([id, t]) => (
+          <li key={id} className="flex justify-between">
+            <span className="text-zinc-600 dark:text-zinc-400">Card #{id}</span>
+            <span>Tax +{t}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function InGameView({ state }: Props) {
   const cardsThisGame =
     state.opponentCards.get(state.gameNumber) ?? new Set<number>();
+  const playerTax =
+    state.playerSeatId !== null
+      ? state.commanderTax.get(state.playerSeatId)
+      : undefined;
+  const opponentTax =
+    state.opponentSeatId !== null
+      ? state.commanderTax.get(state.opponentSeatId)
+      : undefined;
 
   return (
     <div className="grid grid-cols-2 gap-4 p-4 h-full">
@@ -23,21 +52,7 @@ export function InGameView({ state }: Props) {
           </div>
         </dl>
 
-        {state.commanderTax.size > 0 && (
-          <div className="mt-4">
-            <h3 className="text-sm font-medium mb-2">Commander</h3>
-            <ul className="text-sm space-y-1">
-              {Array.from(state.commanderTax.entries()).map(([id, tax]) => (
-                <li key={id} className="flex justify-between">
-                  <span className="text-zinc-600 dark:text-zinc-400">
-                    Card #{id}
-                  </span>
-                  <span>Tax +{tax}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <CommanderList tax={playerTax} />
 
         <div className="mt-6 text-sm italic text-zinc-500">
           Draw odds — coming soon
@@ -48,7 +63,10 @@ export function InGameView({ state }: Props) {
         <h2 className="text-base font-semibold mb-3">
           {state.opponent?.name ?? "Opponent"}
         </h2>
-        <div className="text-sm">
+
+        <CommanderList tax={opponentTax} />
+
+        <div className="mt-4 text-sm">
           <div className="mb-2 flex justify-between">
             <span className="text-zinc-500">Cards seen this game</span>
             <span>{cardsThisGame.size}</span>

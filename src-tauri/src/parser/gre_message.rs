@@ -14,6 +14,9 @@ pub struct GreParser {
     instance_map: HashMap<u32, u32>,
     // Maps instanceId → current visibility
     visibility_map: HashMap<u32, String>,
+    // Maps instanceId → owner seat id (cards' true owner, used for ZoneChanged
+    // events because shared zones like Stack and Command report ownerSeatId: 0)
+    owner_map: HashMap<u32, u8>,
     // Current game number within the match (1-indexed, increments on GameEnded)
     game_number: u8,
     // Maps commander grpId → number of times cast this match (for tax calculation)
@@ -26,6 +29,7 @@ impl GreParser {
             zone_map: HashMap::new(),
             instance_map: HashMap::new(),
             visibility_map: HashMap::new(),
+            owner_map: HashMap::new(),
             game_number: 1,
             commander_casts: HashMap::new(),
         }
@@ -35,6 +39,7 @@ impl GreParser {
         self.zone_map.clear();
         self.instance_map.clear();
         self.visibility_map.clear();
+        self.owner_map.clear();
         self.game_number = 1;
         self.commander_casts.clear();
     }
@@ -113,6 +118,7 @@ impl GreParser {
         self.zone_map.clear();
         self.instance_map.clear();
         self.visibility_map.clear();
+        self.owner_map.clear();
 
         if let Some(zones) = gs.get("zones").and_then(|z| z.as_array()) {
             for zone in zones {
@@ -161,15 +167,19 @@ impl GreParser {
 
     fn ingest_object(&mut self, obj: &Value) {
         if let Some(instance_id) = obj.get("instanceId").and_then(|i| i.as_u64()) {
+            let id = instance_id as u32;
             if let Some(grp_id) = obj.get("grpId").and_then(|g| g.as_u64()) {
-                self.instance_map.insert(instance_id as u32, grp_id as u32);
+                self.instance_map.insert(id, grp_id as u32);
+            }
+            if let Some(owner) = obj.get("ownerSeatId").and_then(|o| o.as_u64()) {
+                self.owner_map.insert(id, owner as u8);
             }
             let vis = obj
                 .get("visibility")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Visibility_Public")
                 .to_string();
-            self.visibility_map.insert(instance_id as u32, vis);
+            self.visibility_map.insert(id, vis);
         }
     }
 
@@ -210,8 +220,10 @@ impl GreParser {
         }) {
             for id in old_ids {
                 if let Some(id) = id.as_u64() {
-                    self.instance_map.remove(&(id as u32));
-                    self.visibility_map.remove(&(id as u32));
+                    let id = id as u32;
+                    self.instance_map.remove(&id);
+                    self.visibility_map.remove(&id);
+                    self.owner_map.remove(&id);
                 }
             }
         }
@@ -251,7 +263,7 @@ impl GreParser {
             None => return vec![],
         };
 
-        let (src_zone_type, owner_seat_id) = match self.zone_map.get(&src_zone_id) {
+        let (src_zone_type, src_zone_owner) = match self.zone_map.get(&src_zone_id) {
             Some(info) => (info.zone_type.clone(), info.owner_seat_id),
             None => return vec![],
         };
@@ -264,6 +276,15 @@ impl GreParser {
             Some(&id) => id,
             None => return vec![],
         };
+
+        // Prefer the card's own ownerSeatId (from gameObject) — shared zones
+        // like Stack and Command report ownerSeatId: 0 on the zone itself.
+        let owner_seat_id = self
+            .owner_map
+            .get(&instance_id)
+            .copied()
+            .filter(|&o| o != 0)
+            .unwrap_or(src_zone_owner);
 
         let face_down = dst_zone_type == "ZoneType_Exile"
             && self
