@@ -14,6 +14,8 @@ pub struct GreParser {
     instance_map: HashMap<u32, u32>,
     // Maps instanceId → current visibility
     visibility_map: HashMap<u32, String>,
+    // Current game number within the match (1-indexed, increments on GameEnded)
+    game_number: u8,
 }
 
 impl GreParser {
@@ -22,6 +24,7 @@ impl GreParser {
             zone_map: HashMap::new(),
             instance_map: HashMap::new(),
             visibility_map: HashMap::new(),
+            game_number: 1,
         }
     }
 
@@ -29,6 +32,7 @@ impl GreParser {
         self.zone_map.clear();
         self.instance_map.clear();
         self.visibility_map.clear();
+        self.game_number = 1;
     }
 
     pub fn parse(&mut self, content: &str) -> Vec<GameEvent> {
@@ -55,8 +59,21 @@ impl GreParser {
                         events.push(e);
                     }
                 }
+                "GREMessageType_SubmitDeckReq" => {
+                    if let Some(e) = self.parse_submit_deck(msg) {
+                        events.push(e);
+                    }
+                }
                 "GREMessageType_GameStateMessage" => {
                     events.extend(self.parse_game_state(msg));
+                }
+                "GREMessageType_IntermissionReq" => {
+                    if let Some(e) = self.parse_intermission(msg) {
+                        events.push(e);
+                    }
+                }
+                "GREMessageType_DieRollResultsResp" => {
+                    events.extend(self.parse_die_rolls(msg));
                 }
                 _ => {}
             }
@@ -66,29 +83,7 @@ impl GreParser {
 
     fn parse_connect_resp(&self, msg: &Value) -> Option<GameEvent> {
         let deck_msg = msg.get("connectResp")?.get("deckMessage")?;
-
-        // deckCards is a flat array with duplicates representing multiple copies
-        let raw_cards = deck_msg.get("deckCards")?.as_array()?;
-        let mut counts: HashMap<u32, u32> = HashMap::new();
-        for c in raw_cards {
-            if let Some(id) = c.as_u64() {
-                *counts.entry(id as u32).or_insert(0) += 1;
-            }
-        }
-
-        let cards = counts
-            .into_iter()
-            .map(|(card_id, quantity)| DeckCard { card_id, quantity })
-            .collect();
-
-        let commander = deck_msg
-            .get("commanderCards")
-            .and_then(|c| c.as_array())
-            .and_then(|a| a.first())
-            .and_then(|c| c.as_u64())
-            .map(|id| id as u32);
-
-        Some(GameEvent::DeckLoaded { cards, commander })
+        flat_array_to_deck_loaded(deck_msg)
     }
 
     fn parse_game_state(&mut self, msg: &Value) -> Vec<GameEvent> {
@@ -186,6 +181,66 @@ impl GreParser {
             .collect()
     }
 
+    fn parse_submit_deck(&self, msg: &Value) -> Option<GameEvent> {
+        let deck = msg.get("submitDeckReq")?.get("deck")?;
+        flat_array_to_deck_loaded(deck)
+    }
+
+    fn parse_intermission(&mut self, msg: &Value) -> Option<GameEvent> {
+        let req = msg.get("intermissionReq")?;
+        let prompt_id = req
+            .get("intermissionPrompt")?
+            .get("promptId")?
+            .as_u64()?;
+
+        let winning_team_id = req
+            .get("intermissionPrompt")?
+            .get("parameters")?
+            .as_array()?
+            .iter()
+            .find_map(|p| {
+                if p.get("parameterName")?.as_str()? == "WinningTeamId" {
+                    p.get("numberValue")?.as_u64()
+                } else {
+                    None
+                }
+            })? as u8;
+
+        // promptId 25 = game over, sideboard follows; promptId 27 = match over
+        let sideboard_next = prompt_id == 25;
+        let game_number = self.game_number;
+
+        if sideboard_next {
+            self.game_number += 1;
+        }
+
+        Some(GameEvent::GameEnded {
+            winning_team_id,
+            game_number,
+            sideboard_next,
+        })
+    }
+
+    fn parse_die_rolls(&self, msg: &Value) -> Vec<GameEvent> {
+        let rolls = msg
+            .get("dieRollResultsResp")
+            .and_then(|r| r.get("playerDieRolls"))
+            .and_then(|r| r.as_array());
+
+        match rolls {
+            None => vec![],
+            Some(rolls) => rolls
+                .iter()
+                .filter_map(|r| {
+                    Some(GameEvent::DieRollResult {
+                        seat_id: r.get("systemSeatId")?.as_u64()? as u8,
+                        roll_value: r.get("rollValue")?.as_u64()? as u32,
+                    })
+                })
+                .collect(),
+        }
+    }
+
     fn try_zone_transfer(&self, ann: &Value) -> Option<GameEvent> {
         // Only handle ZoneTransfer annotations
         let types = ann.get("type")?.as_array()?;
@@ -227,6 +282,32 @@ impl GreParser {
             face_down,
         })
     }
+}
+
+/// Converts a flat card ID array (with duplicates) into a DeckLoaded event.
+/// Used for both ConnectResp.deckMessage and SubmitDeckReq.deck.
+fn flat_array_to_deck_loaded(deck: &Value) -> Option<GameEvent> {
+    let raw_cards = deck.get("deckCards")?.as_array()?;
+    let mut counts: HashMap<u32, u32> = HashMap::new();
+    for c in raw_cards {
+        if let Some(id) = c.as_u64() {
+            *counts.entry(id as u32).or_insert(0) += 1;
+        }
+    }
+
+    let cards = counts
+        .into_iter()
+        .map(|(card_id, quantity)| DeckCard { card_id, quantity })
+        .collect();
+
+    let commander = deck
+        .get("commanderCards")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.as_u64())
+        .map(|id| id as u32);
+
+    Some(GameEvent::DeckLoaded { cards, commander })
 }
 
 fn extract_int_detail(details: &[Value], key: &str) -> Option<i64> {

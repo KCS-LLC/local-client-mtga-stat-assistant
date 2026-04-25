@@ -78,4 +78,17 @@ pub enum GameEvent {
         deck_name: String,
         cards: Vec<DeckCard>,
     },
+    /// A single game within a match ended (Bo3 only for sideboard_next: true)
+    GameEnded {
+        winning_team_id: u8,
+        game_number: u8,
+        /// true = sideboard phase follows (more games remain)
+        /// false = match is over
+        sideboard_next: bool,
+    },
+    /// One player's die roll result at match start (one event emitted per player)
+    DieRollResult {
+        seat_id: u8,
+        roll_value: u32,
+    },
 }
