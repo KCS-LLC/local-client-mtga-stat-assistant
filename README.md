@@ -13,6 +13,10 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 - [ ] Match history with opponent name, format, date, and result
 - [ ] Win rate displayed per deck over configurable time windows (session / 7d / 30d / all-time)
 - [ ] Persistent storage of match history across sessions
+- [ ] Play/draw tracking — record whether you played first or drew first per match (on by default)
+- [ ] Win rate on the play vs on the draw
+- [ ] Coin flip / die roll result tracking per match (on by default)
+- [ ] Win rate when winning vs losing the flip/roll
 
 ### Opponent Tracking
 - [ ] Cards played by opponent logged per match (battlefield entries only — hidden hand/library not accessible)
@@ -121,10 +125,12 @@ To run from source you will need:
 
 ```
 settings
-├── log_path            (string)  — path to Player.log
-├── player_id           (string)  — user's MTGA userId
-├── backup_on_launch    (boolean) — default: true
-├── track_deck_history  (boolean) — default: false
+├── log_path              (string)  — path to Player.log
+├── player_id             (string)  — user's MTGA userId
+├── backup_on_launch      (boolean) — default: true
+├── track_deck_history    (boolean) — default: false
+├── track_play_draw       (boolean) — default: true
+├── track_flip_roll       (boolean) — default: true
 ```
 
 ### Why not rotate the database by date or match count?
