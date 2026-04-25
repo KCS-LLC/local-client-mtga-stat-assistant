@@ -1,4 +1,7 @@
+mod events;
 mod mtga_process;
+mod parser;
+mod router;
 mod segmenter;
 mod tailer;
 
@@ -61,15 +64,16 @@ fn watch_log(app_handle: tauri::AppHandle) {
 
         let (line_tx, line_rx) = mpsc::channel::<String>();
         let (chunk_tx, chunk_rx) = mpsc::channel::<segmenter::Chunk>();
+        let (event_tx, event_rx) = mpsc::channel::<events::GameEvent>();
         let running = Arc::new(AtomicBool::new(true));
 
         tailer::start(log_path, start_pos, line_tx, running.clone());
         segmenter::start(line_rx, chunk_tx);
+        router::start(chunk_rx, event_tx);
 
-        // Relay chunks to the frontend for now.
-        // This will be replaced by the router in the next step.
-        for chunk in chunk_rx {
-            let _ = app_handle.emit("log_chunk", &chunk.content);
+        // Relay typed events to the frontend
+        for event in event_rx {
+            let _ = app_handle.emit("game_event", &event);
         }
     });
 }
