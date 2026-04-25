@@ -1,3 +1,5 @@
+mod db;
+mod event_sink;
 mod events;
 mod mtga_process;
 mod parser;
@@ -5,10 +7,12 @@ mod router;
 mod segmenter;
 mod tailer;
 
-use std::sync::{atomic::AtomicBool, mpsc, Arc};
+use db::{Db, DeckWL, MatchRecord};
+use event_sink::EventSink;
+use std::sync::{atomic::AtomicBool, mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager, State};
 
 #[tauri::command]
 fn launch_mtga(path: Option<String>) -> Result<(), String> {
@@ -18,6 +22,22 @@ fn launch_mtga(path: Option<String>) -> Result<(), String> {
 #[tauri::command]
 fn get_mtga_status() -> bool {
     mtga_process::is_running()
+}
+
+#[tauri::command]
+fn get_wl_stats(db: State<Arc<Mutex<Db>>>) -> Result<Vec<DeckWL>, String> {
+    db.lock()
+        .map_err(|e| e.to_string())?
+        .get_wl_stats()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_match_history(db: State<Arc<Mutex<Db>>>) -> Result<Vec<MatchRecord>, String> {
+    db.lock()
+        .map_err(|e| e.to_string())?
+        .get_match_history(50)
+        .map_err(|e| e.to_string())
 }
 
 fn default_log_path() -> std::path::PathBuf {
@@ -32,7 +52,14 @@ fn default_log_path() -> std::path::PathBuf {
         .join("Player.log")
 }
 
-fn watch_log(app_handle: tauri::AppHandle) {
+fn default_db_path() -> std::path::PathBuf {
+    let app_data = std::env::var("APPDATA").unwrap_or_default();
+    std::path::Path::new(&app_data)
+        .join("local-client-mtga-stat-assistant")
+        .join("stats.db")
+}
+
+fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>) {
     thread::spawn(move || {
         let log_path = default_log_path();
         let mtga_was_running = mtga_process::is_running();
@@ -40,12 +67,10 @@ fn watch_log(app_handle: tauri::AppHandle) {
         let _ = app_handle.emit("mtga_status", mtga_was_running);
 
         if !mtga_was_running {
-            // Wait for the user to launch MTGA (via button or manually)
             loop {
                 thread::sleep(Duration::from_secs(1));
                 if mtga_process::is_running() {
                     let _ = app_handle.emit("mtga_status", true);
-                    // Give MTGA a moment to create/clear the log file
                     while !log_path.exists() {
                         thread::sleep(Duration::from_millis(500));
                     }
@@ -54,8 +79,6 @@ fn watch_log(app_handle: tauri::AppHandle) {
             }
         }
 
-        // If MTGA was already running we missed the session start — begin at
-        // end of file and pick up from the next match forward.
         let start_pos = if mtga_was_running {
             tailer::StartPosition::End
         } else {
@@ -71,8 +94,14 @@ fn watch_log(app_handle: tauri::AppHandle) {
         segmenter::start(line_rx, chunk_tx);
         router::start(chunk_rx, event_tx);
 
-        // Relay typed events to the frontend
+        let mut sink = EventSink::new();
+
         for event in event_rx {
+            // Write to DB
+            if let Ok(mut db) = db.lock() {
+                sink.process(&event, &mut db);
+            }
+            // Push to frontend
             let _ = app_handle.emit("game_event", &event);
         }
     });
@@ -80,13 +109,24 @@ fn watch_log(app_handle: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let db_path = default_db_path();
+    let db = Db::open(&db_path).expect("failed to open database");
+    let db = Arc::new(Mutex::new(db));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(db.clone())
         .setup(|app| {
-            watch_log(app.handle().clone());
+            let db = app.state::<Arc<Mutex<Db>>>().inner().clone();
+            watch_log(app.handle().clone(), db);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![launch_mtga, get_mtga_status])
+        .invoke_handler(tauri::generate_handler![
+            launch_mtga,
+            get_mtga_status,
+            get_wl_stats,
+            get_match_history
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
