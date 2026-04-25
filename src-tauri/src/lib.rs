@@ -1,4 +1,5 @@
 mod mtga_process;
+mod segmenter;
 mod tailer;
 
 use std::sync::{atomic::AtomicBool, mpsc, Arc};
@@ -58,15 +59,17 @@ fn watch_log(app_handle: tauri::AppHandle) {
             tailer::StartPosition::Beginning
         };
 
-        let (tx, rx) = mpsc::channel::<String>();
+        let (line_tx, line_rx) = mpsc::channel::<String>();
+        let (chunk_tx, chunk_rx) = mpsc::channel::<segmenter::Chunk>();
         let running = Arc::new(AtomicBool::new(true));
 
-        tailer::start(log_path, start_pos, tx, running.clone());
+        tailer::start(log_path, start_pos, line_tx, running.clone());
+        segmenter::start(line_rx, chunk_tx);
 
-        // Relay raw lines to the frontend for now.
-        // This will be replaced by the segmenter in the next step.
-        for line in rx {
-            let _ = app_handle.emit("log_line", &line);
+        // Relay chunks to the frontend for now.
+        // This will be replaced by the router in the next step.
+        for chunk in chunk_rx {
+            let _ = app_handle.emit("log_chunk", &chunk.content);
         }
     });
 }
