@@ -90,7 +90,7 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 | Log watching | Rust (polling, 250ms interval) |
 | Probability math | Rust (hypergeometric distribution) |
 | Local storage | SQLite via `rusqlite` |
-| Frontend framework | React 18 + TypeScript |
+| Frontend framework | React 19 + TypeScript + Tailwind CSS v4 |
 
 ---
 
