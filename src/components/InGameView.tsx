@@ -1,20 +1,20 @@
 import type { MatchState } from "../hooks/useMatchState";
-import { useCardNames } from "../hooks/useCardNames";
+import { useCardInfo, type CardInfo } from "../hooks/useCardNames";
 
 interface Props {
   state: MatchState;
 }
 
-function cardLabel(id: number, names: Map<number, string>): string {
-  return names.get(id) ?? `Card #${id}`;
+function cardLabel(id: number, info: Map<number, CardInfo>): string {
+  return info.get(id)?.name ?? `Card #${id}`;
 }
 
 function CommanderList({
   tax,
-  names,
+  info,
 }: {
   tax: Map<number, number> | undefined;
-  names: Map<number, string>;
+  info: Map<number, CardInfo>;
 }) {
   if (!tax || tax.size === 0) return null;
   return (
@@ -24,7 +24,7 @@ function CommanderList({
         {Array.from(tax.entries()).map(([id, t]) => (
           <li key={id} className="flex justify-between">
             <span className="text-zinc-700 dark:text-zinc-300">
-              {cardLabel(id, names)}
+              {cardLabel(id, info)}
             </span>
             {t > 0 && <span>Tax +{t}</span>}
           </li>
@@ -46,11 +46,25 @@ export function InGameView({ state }: Props) {
       ? state.commanderTax.get(state.opponentSeatId)
       : undefined;
 
-  // Collect every grpId we want a name for, then resolve them all at once
+  // Collect every grpId we want info for, then resolve them all at once
   const allIds = new Set<number>(cardsThisGame);
   if (playerTax) for (const id of playerTax.keys()) allIds.add(id);
   if (opponentTax) for (const id of opponentTax.keys()) allIds.add(id);
-  const names = useCardNames(allIds);
+  const info = useCardInfo(allIds);
+
+  // Filter tokens out of the opponent's "cards seen" list — they don't exist
+  // outside the game and would clutter the deck-tracking view. Tokens we
+  // haven't resolved yet (info missing) get optimistically shown; once the
+  // lookup resolves and is_token = true, they drop out.
+  const realCardsThisGame = new Set<number>();
+  let tokenCount = 0;
+  for (const id of cardsThisGame) {
+    if (info.get(id)?.is_token) {
+      tokenCount += 1;
+    } else {
+      realCardsThisGame.add(id);
+    }
+  }
 
   return (
     <div className="grid grid-cols-2 gap-4 p-4 h-full">
@@ -67,7 +81,7 @@ export function InGameView({ state }: Props) {
           </div>
         </dl>
 
-        <CommanderList tax={playerTax} names={names} />
+        <CommanderList tax={playerTax} info={info} />
 
         <div className="mt-6 text-sm italic text-zinc-500">
           Draw odds — coming soon
@@ -79,18 +93,24 @@ export function InGameView({ state }: Props) {
           {state.opponent?.name ?? "Opponent"}
         </h2>
 
-        <CommanderList tax={opponentTax} names={names} />
+        <CommanderList tax={opponentTax} info={info} />
 
         <div className="mt-4 text-sm">
           <div className="mb-2 flex justify-between">
             <span className="text-zinc-500">Cards seen this game</span>
-            <span>{cardsThisGame.size}</span>
+            <span>{realCardsThisGame.size}</span>
           </div>
-          {cardsThisGame.size > 0 && (
+          {tokenCount > 0 && (
+            <div className="mb-2 flex justify-between text-xs text-zinc-500">
+              <span>Tokens (not counted)</span>
+              <span>{tokenCount}</span>
+            </div>
+          )}
+          {realCardsThisGame.size > 0 && (
             <ul className="space-y-1 mt-3 max-h-96 overflow-auto">
-              {Array.from(cardsThisGame).map((id) => (
+              {Array.from(realCardsThisGame).map((id) => (
                 <li key={id} className="text-zinc-700 dark:text-zinc-300">
-                  {cardLabel(id, names)}
+                  {cardLabel(id, info)}
                 </li>
               ))}
             </ul>

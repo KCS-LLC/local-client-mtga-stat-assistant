@@ -1,3 +1,4 @@
+use crate::cards::CardDatabase;
 use crate::db::Db;
 use crate::events::{GameEvent, Zone};
 use std::collections::HashMap;
@@ -29,7 +30,7 @@ impl EventSink {
         }
     }
 
-    pub fn process(&mut self, event: &GameEvent, db: &mut Db) {
+    pub fn process(&mut self, event: &GameEvent, db: &mut Db, cards: &CardDatabase) {
         match event {
             GameEvent::MatchStarted {
                 match_id,
@@ -119,11 +120,13 @@ impl EventSink {
                 face_down,
                 ..
             } => {
-                // Record opponent cards entering the battlefield (face-up only)
+                // Record real opponent cards (skip tokens — they don't exist
+                // in the deck list and would pollute the per-match history)
                 if matches!(to_zone, Zone::Battlefield)
                     && *owner_seat_id == self.opponent_seat_id
                     && !face_down
                     && self.current_match_id.is_some()
+                    && !cards.is_token(*card_id)
                 {
                     let mid = self.current_match_id.clone().unwrap();
                     let _ = db.record_opponent_card(&mid, self.current_game_number, *card_id);

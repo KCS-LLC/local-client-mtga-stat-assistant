@@ -9,11 +9,11 @@ mod router;
 mod segmenter;
 mod tailer;
 
-use cards::CardDatabase;
+use cards::{CardDatabase, CardInfo, SharedCards};
 use db::{Db, DeckWL, MatchRecord};
 use event_sink::EventSink;
 use std::collections::HashMap;
-use std::sync::{atomic::AtomicBool, mpsc, Arc, Mutex};
+use std::sync::{atomic::AtomicBool, mpsc, Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 use tauri::{Emitter, Manager, State};
@@ -45,11 +45,14 @@ fn get_match_history(db: State<Arc<Mutex<Db>>>) -> Result<Vec<MatchRecord>, Stri
 }
 
 #[tauri::command]
-fn get_card_names(
+fn get_card_info(
     grp_ids: Vec<u32>,
-    cards: State<Arc<CardDatabase>>,
-) -> HashMap<u32, String> {
-    cards.get_names(&grp_ids)
+    cards: State<SharedCards>,
+) -> HashMap<u32, CardInfo> {
+    cards
+        .read()
+        .map(|c| c.get_info(&grp_ids))
+        .unwrap_or_default()
 }
 
 fn default_log_path() -> std::path::PathBuf {
@@ -71,7 +74,7 @@ fn default_db_path() -> std::path::PathBuf {
         .join("stats.db")
 }
 
-fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>) {
+fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>, cards: SharedCards) {
     thread::spawn(move || {
         let log_path = default_log_path();
         let mtga_was_running = mtga_process::is_running();
@@ -122,7 +125,9 @@ fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>) {
             dlog!("[event] {:?}", event);
             // Write to DB
             if let Ok(mut db) = db.lock() {
-                sink.process(&event, &mut db);
+                if let Ok(card_db) = cards.read() {
+                    sink.process(&event, &mut db, &card_db);
+                }
             }
             // Push to frontend
             let _ = app_handle.emit("game_event", &event);
@@ -147,15 +152,17 @@ pub fn run() {
     let db = Db::open(&db_path).expect("failed to open database");
     let db = Arc::new(Mutex::new(db));
 
-    let card_db = Arc::new(CardDatabase::load());
+    let card_db: SharedCards = Arc::new(RwLock::new(CardDatabase::load()));
+    cards::spawn_watcher(card_db.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(db.clone())
-        .manage(card_db)
-        .setup(|app| {
+        .manage(card_db.clone())
+        .setup(move |app| {
             let db = app.state::<Arc<Mutex<Db>>>().inner().clone();
-            watch_log(app.handle().clone(), db);
+            let cards = app.state::<SharedCards>().inner().clone();
+            watch_log(app.handle().clone(), db, cards);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -163,7 +170,7 @@ pub fn run() {
             get_mtga_status,
             get_wl_stats,
             get_match_history,
-            get_card_names
+            get_card_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
