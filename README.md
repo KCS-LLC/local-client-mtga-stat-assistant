@@ -54,19 +54,29 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 
 | Module | Status |
 |---|---|
-| Project scaffold | Planned |
-| Log file parser (Rust) | Planned |
-| Match start/end events | Planned |
-| Deck list extraction | Planned |
-| Zone change tracking | Planned |
-| Win/loss tracker UI | Planned |
-| Opponent card log UI | Planned |
-| Draw odds calculator | Planned |
-| Draw odds UI | Planned |
-| Persistent match history | Planned |
-| Settings / configuration | Planned |
-| DB backup on launch | Planned |
-| JSON export | Planned |
+| Project scaffold | Complete |
+| Log file tailer (Rust, 250ms poll) | Complete |
+| Log segmenter | Complete |
+| Router (chunk classifier) | Complete |
+| Match start/end events | Complete |
+| Deck list extraction (ConnectResp + SubmitDeckReq) | Complete |
+| Zone change tracking | Complete |
+| Commander tax tracking | Complete |
+| Commander return tracking (SBA) | Complete |
+| Shuffle / instance ID invalidation | Complete |
+| Bo3 game boundary events (IntermissionReq) | Complete |
+| Die roll result events | Complete |
+| Deck snapshot extraction (CourseData) | Complete |
+| SQLite DB layer | Complete |
+| Match/game/opponent-card persistence | Complete |
+| W/L stats + match history Tauri commands | Complete |
+| Win/loss tracker UI | Not started |
+| Opponent card log UI | Not started |
+| Draw odds calculator (Rust) | Not started |
+| Draw odds UI | Not started |
+| Settings / configuration UI | Not started |
+| DB backup on launch | Not started |
+| JSON export | Not started |
 
 ---
 
@@ -77,7 +87,7 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 | Backend | Rust |
 | Desktop shell | Tauri 2.x |
 | Frontend | HTML / CSS / TypeScript |
-| Log watching | Rust (`notify` crate) |
+| Log watching | Rust (polling, 250ms interval) |
 | Probability math | Rust (hypergeometric distribution) |
 | Local storage | SQLite via `rusqlite` |
 | Frontend framework | React 18 + TypeScript |
@@ -123,14 +133,26 @@ To run from source you will need:
 
 ### Settings table
 
+Stored as key/value rows in SQLite. Defaults seeded on first launch:
+
 ```
 settings
-├── log_path              (string)  — path to Player.log
-├── player_id             (string)  — user's MTGA userId
+├── player_id             (string)  — MTGA userId; auto-detected from first match, user-editable
 ├── backup_on_launch      (boolean) — default: true
 ├── track_deck_history    (boolean) — default: false
 ├── track_play_draw       (boolean) — default: true
 ├── track_flip_roll       (boolean) — default: true
+```
+
+DB location: `%APPDATA%\local-client-mtga-stat-assistant\stats.db`
+
+### Database schema
+
+```
+matches         — one row per match (format, players, deck, result, die roll, play/draw)
+games           — one row per game within a match (game_number, winning_team_id)
+opponent_cards  — one row per unique card seen on opponent's battlefield per game
+settings        — key/value configuration
 ```
 
 ### Why not rotate the database by date or match count?
