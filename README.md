@@ -32,6 +32,12 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 - [ ] Windows support (primary)
 - [ ] macOS support (planned)
 - [ ] No MTGA account login required — local log only
+- [ ] Export full match history to JSON
+
+### Data & Storage
+- [ ] SQLite database for persistent match history (zero install overhead — bundled in app binary)
+- [ ] Automatic `.bak` file created on each app launch (on by default, user-configurable)
+- [ ] JSON export for portability and use with external analysis tools
 
 ---
 
@@ -50,6 +56,8 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 | Draw odds UI | Planned |
 | Persistent match history | Planned |
 | Settings / configuration | Planned |
+| DB backup on launch | Planned |
+| JSON export | Planned |
 
 ---
 
@@ -63,7 +71,7 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 | Log watching | Rust (`notify` crate) |
 | Probability math | Rust (hypergeometric distribution) |
 | Local storage | SQLite via `rusqlite` |
-| Frontend framework | TBD |
+| Frontend framework | React 18 + TypeScript |
 
 ---
 
@@ -91,6 +99,22 @@ To run from source you will need:
 |---|---|
 | Windows | `%AppData%\..\LocalLow\Wizards Of The Coast\MTGA\Player.log` |
 | macOS | `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log` |
+
+---
+
+## Architecture Decisions
+
+| Decision | Choice | Reason |
+|---|---|---|
+| Frontend → backend comms | Tauri Events (push model) | Log stream is push by nature — Rust emits, React listens |
+| Storage | SQLite via `rusqlite` | Zero user-facing install, handles years of match data at ~2-3MB/year |
+| DB backup | Single `.bak` on launch, on by default | Corruption recovery without fragmenting history |
+| DB rotation | Not implemented — unnecessary at expected data volumes | See size analysis below |
+| Aggregation | Separate future project | Local client stays offline and lightweight; aggregation is opt-in |
+
+### Why not rotate the database by date or match count?
+
+At ~2-3MB per year of serious play, the database will never approach a size that causes performance issues. Rotation would fragment match history and complicate cross-period queries. Instead, the app keeps one rolling `.bak` file for corruption recovery and provides a JSON export for users who want to archive or share their data.
 
 ---
 
