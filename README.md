@@ -34,6 +34,11 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 - [ ] No MTGA account login required — local log only
 - [ ] Export full match history to JSON
 
+### Deck History
+- [ ] Deck list snapshot saved per session (off by default, user-configurable)
+  - MTGA reports all current deck lists on every launch — this feature captures and stores those snapshots over time
+  - Useful for tracking how decks evolve, and as input for the future aggregation project
+
 ### Data & Storage
 - [ ] SQLite database for persistent match history (zero install overhead — bundled in app binary)
 - [ ] Automatic `.bak` file created on each app launch (on by default, user-configurable)
@@ -111,6 +116,16 @@ To run from source you will need:
 | DB backup | Single `.bak` on launch, on by default | Corruption recovery without fragmenting history |
 | DB rotation | Not implemented — unnecessary at expected data volumes | See size analysis below |
 | Aggregation | Separate future project | Local client stays offline and lightweight; aggregation is opt-in |
+
+### Settings table
+
+```
+settings
+├── log_path            (string)  — path to Player.log
+├── player_id           (string)  — user's MTGA userId
+├── backup_on_launch    (boolean) — default: true
+├── track_deck_history  (boolean) — default: false
+```
 
 ### Why not rotate the database by date or match count?
 
