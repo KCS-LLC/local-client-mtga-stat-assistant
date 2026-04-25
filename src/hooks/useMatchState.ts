@@ -56,10 +56,8 @@ function reducer(state: MatchState, action: Action): MatchState {
   };
   switch (e.type) {
     case "MatchStarted":
-      // Frontend doesn't know which player is "us" — backend's event_sink
-      // identifies via settings.player_id. For UI display, we just show
-      // both players; opponent is whichever one isn't us. Until we wire
-      // a settings query, default opponent = player2.
+      // Tentative — assume player1 = us. PlayerIdentified arrives next and
+      // corrects this if the local player is actually player2 in this match.
       return {
         ...state,
         inMatch: true,
@@ -71,6 +69,14 @@ function reducer(state: MatchState, action: Action): MatchState {
         gameNumber: 1,
         opponentCards: new Map(),
         commanderTax: new Map(),
+      };
+
+    case "PlayerIdentified":
+      return {
+        ...state,
+        playerSeatId: e.player_seat_id,
+        opponentSeatId: e.opponent_seat_id,
+        opponent: e.opponent,
       };
 
     case "MatchEnded":

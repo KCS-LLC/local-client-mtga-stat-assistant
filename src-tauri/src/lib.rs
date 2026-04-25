@@ -123,14 +123,21 @@ fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>, cards: SharedCard
 
         for event in event_rx {
             dlog!("[event] {:?}", event);
-            // Write to DB
-            if let Ok(mut db) = db.lock() {
-                if let Ok(card_db) = cards.read() {
-                    sink.process(&event, &mut db, &card_db);
+            // Write to DB and collect any synthesized follow-up events
+            let synthesized: Vec<events::GameEvent> = {
+                if let (Ok(mut db), Ok(card_db)) = (db.lock(), cards.read()) {
+                    sink.process(&event, &mut db, &card_db)
+                } else {
+                    vec![]
                 }
-            }
-            // Push to frontend
+            };
+            // Push original event, then synthesized ones — the frontend's
+            // reducer relies on PlayerIdentified arriving right after MatchStarted
             let _ = app_handle.emit("game_event", &event);
+            for extra in synthesized {
+                dlog!("[event] (synthesized) {:?}", extra);
+                let _ = app_handle.emit("game_event", &extra);
+            }
         }
     });
 }

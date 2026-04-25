@@ -31,6 +31,12 @@ export type GameEvent =
       timestamp: number;
     }
   | {
+      type: "PlayerIdentified";
+      player_seat_id: number;
+      opponent_seat_id: number;
+      opponent: MatchPlayer;
+    }
+  | {
       type: "MatchEnded";
       match_id: string;
       winning_team_id: number;

@@ -53,6 +53,14 @@ pub enum GameEvent {
         format: String,
         timestamp: u64,
     },
+    /// Synthesized by event_sink right after MatchStarted: tells the frontend
+    /// which seat is the local player vs opponent, based on settings.player_id.
+    /// MTGA assigns seats arbitrarily so the frontend can't infer this on its own.
+    PlayerIdentified {
+        player_seat_id: u8,
+        opponent_seat_id: u8,
+        opponent: MatchPlayer,
+    },
     MatchEnded {
         match_id: String,
         winning_team_id: u8,

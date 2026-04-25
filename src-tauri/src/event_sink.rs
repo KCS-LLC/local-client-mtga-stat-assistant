@@ -30,7 +30,13 @@ impl EventSink {
         }
     }
 
-    pub fn process(&mut self, event: &GameEvent, db: &mut Db, cards: &CardDatabase) {
+    pub fn process(
+        &mut self,
+        event: &GameEvent,
+        db: &mut Db,
+        cards: &CardDatabase,
+    ) -> Vec<GameEvent> {
+        let mut emit = vec![];
         match event {
             GameEvent::MatchStarted {
                 match_id,
@@ -69,6 +75,13 @@ impl EventSink {
                     &opponent.user_id,
                     *timestamp as i64,
                 );
+
+                // Tell the frontend which seat is the local player
+                emit.push(GameEvent::PlayerIdentified {
+                    player_seat_id: me.seat_id,
+                    opponent_seat_id: opponent.seat_id,
+                    opponent: opponent.clone(),
+                });
             }
 
             GameEvent::MatchEnded {
@@ -144,24 +157,27 @@ impl EventSink {
                     .insert(deck_id.clone(), (deck_name.clone(), qty));
             }
 
-            GameEvent::DeckLoaded { cards, .. } => {
-                if self.deck_identified {
-                    return;
-                }
-                let mid = match &self.current_match_id {
-                    Some(m) => m.clone(),
-                    None => return,
-                };
-                let loaded: HashMap<u32, u32> =
-                    cards.iter().map(|c| (c.card_id, c.quantity)).collect();
-                if let Some((deck_id, name)) = self
-                    .deck_snapshots
-                    .iter()
-                    .find(|(_, (_, snap_cards))| *snap_cards == loaded)
-                    .map(|(id, (name, _))| (id.clone(), name.clone()))
-                {
-                    let _ = db.set_match_deck(&mid, &deck_id, &name);
-                    self.deck_identified = true;
+            GameEvent::DeckLoaded { cards, commander } => {
+                if !self.deck_identified {
+                    if let Some(mid) = self.current_match_id.clone() {
+                        // DeckSnapshot lists the commander as part of `cards`,
+                        // but DeckLoaded keeps it separate, so add it here
+                        // before comparing or no Brawl/Commander deck will match.
+                        let mut loaded: HashMap<u32, u32> =
+                            cards.iter().map(|c| (c.card_id, c.quantity)).collect();
+                        if let Some(cmdr) = commander {
+                            loaded.entry(*cmdr).or_insert(1);
+                        }
+                        if let Some((deck_id, name)) = self
+                            .deck_snapshots
+                            .iter()
+                            .find(|(_, (_, snap_cards))| *snap_cards == loaded)
+                            .map(|(id, (name, _))| (id.clone(), name.clone()))
+                        {
+                            let _ = db.set_match_deck(&mid, &deck_id, &name);
+                            self.deck_identified = true;
+                        }
+                    }
                 }
             }
 
@@ -169,5 +185,6 @@ impl EventSink {
             // CommanderRevealed, LibraryShuffle (frontend-only)
             _ => {}
         }
+        emit
     }
 }
