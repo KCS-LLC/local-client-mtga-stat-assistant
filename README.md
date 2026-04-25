@@ -70,8 +70,13 @@ Reads MTGA's local log file in real time — no network calls, no data uploads, 
 | SQLite DB layer | Complete |
 | Match/game/opponent-card persistence | Complete |
 | W/L stats + match history Tauri commands | Complete |
-| Win/loss tracker UI | Not started |
-| Opponent card log UI | Not started |
+| Frontend scaffold (React + Tailwind v4) | Complete |
+| Status bar + theme toggle | Complete |
+| Win/loss tracker UI | Complete (basic) |
+| Match history UI | Complete (basic) |
+| In-game two-column layout | Complete (skeleton) |
+| Opponent card log UI | Complete (shows grpIds; needs name lookup) |
+| Card name lookup (MTGA local data) | Not started |
 | Draw odds calculator (Rust) | Not started |
 | Draw odds UI | Not started |
 | Settings / configuration UI | Not started |
