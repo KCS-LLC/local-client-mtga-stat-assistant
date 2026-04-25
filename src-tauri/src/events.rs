@@ -91,6 +91,11 @@ pub enum GameEvent {
         seat_id: u8,
         roll_value: u32,
     },
+    /// Commander revealed in the Command zone (visible from game start)
+    CommanderRevealed {
+        card_id: u32,
+        seat_id: u8,
+    },
     /// Commander cast from the command zone; tax = extra mana cost above base
     CommanderCast {
         card_id: u32,

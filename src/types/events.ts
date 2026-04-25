@@ -59,6 +59,7 @@ export type GameEvent =
       sideboard_next: boolean;
     }
   | { type: "DieRollResult"; seat_id: number; roll_value: number }
+  | { type: "CommanderRevealed"; card_id: number; seat_id: number }
   | {
       type: "CommanderCast";
       card_id: number;

@@ -9,6 +9,10 @@ pub struct EventSink {
     opponent_seat_id: u8,
     current_game_number: u8,
     die_rolls: HashMap<u8, u32>,
+    // deck_id → (deck_name, card_id → quantity); rebuilt as DeckSnapshot events arrive
+    deck_snapshots: HashMap<String, (String, HashMap<u32, u32>)>,
+    // True once we've successfully matched the current match's deck
+    deck_identified: bool,
 }
 
 impl EventSink {
@@ -20,6 +24,8 @@ impl EventSink {
             opponent_seat_id: 0,
             current_game_number: 1,
             die_rolls: HashMap::new(),
+            deck_snapshots: HashMap::new(),
+            deck_identified: false,
         }
     }
 
@@ -51,6 +57,7 @@ impl EventSink {
                 self.opponent_seat_id = opponent.seat_id;
                 self.current_game_number = 1;
                 self.die_rolls.clear();
+                self.deck_identified = false;
 
                 let _ = db.insert_match(
                     match_id,
@@ -123,8 +130,40 @@ impl EventSink {
                 }
             }
 
-            // Not persisted: DeckLoaded, DeckSnapshot, CommanderCast,
-            // CommanderReturned, LibraryShuffle handled by frontend only
+            GameEvent::DeckSnapshot {
+                deck_id,
+                deck_name,
+                cards,
+            } => {
+                let qty: HashMap<u32, u32> =
+                    cards.iter().map(|c| (c.card_id, c.quantity)).collect();
+                self.deck_snapshots
+                    .insert(deck_id.clone(), (deck_name.clone(), qty));
+            }
+
+            GameEvent::DeckLoaded { cards, .. } => {
+                if self.deck_identified {
+                    return;
+                }
+                let mid = match &self.current_match_id {
+                    Some(m) => m.clone(),
+                    None => return,
+                };
+                let loaded: HashMap<u32, u32> =
+                    cards.iter().map(|c| (c.card_id, c.quantity)).collect();
+                if let Some((deck_id, name)) = self
+                    .deck_snapshots
+                    .iter()
+                    .find(|(_, (_, snap_cards))| *snap_cards == loaded)
+                    .map(|(id, (name, _))| (id.clone(), name.clone()))
+                {
+                    let _ = db.set_match_deck(&mid, &deck_id, &name);
+                    self.deck_identified = true;
+                }
+            }
+
+            // Not persisted at this layer: CommanderCast, CommanderReturned,
+            // CommanderRevealed, LibraryShuffle (frontend-only)
             _ => {}
         }
     }

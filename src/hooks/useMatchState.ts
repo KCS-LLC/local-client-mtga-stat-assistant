@@ -94,6 +94,17 @@ function reducer(state: MatchState, action: Action): MatchState {
       return state;
     }
 
+    case "CommanderRevealed": {
+      const bySeat = new Map(state.commanderTax);
+      const seatMap = new Map(bySeat.get(e.seat_id) ?? []);
+      // Don't overwrite if already cast (would clobber a real tax value)
+      if (!seatMap.has(e.card_id)) {
+        seatMap.set(e.card_id, 0);
+      }
+      bySeat.set(e.seat_id, seatMap);
+      return { ...state, commanderTax: bySeat };
+    }
+
     case "CommanderCast": {
       const bySeat = new Map(state.commanderTax);
       const seatMap = new Map(bySeat.get(e.seat_id) ?? []);

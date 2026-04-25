@@ -1,6 +1,6 @@
 use crate::events::{DeckCard, GameEvent, Zone};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 struct ZoneInfo {
     zone_type: String,
@@ -21,6 +21,8 @@ pub struct GreParser {
     game_number: u8,
     // Maps commander grpId → number of times cast this match (for tax calculation)
     commander_casts: HashMap<u32, u8>,
+    // (seat_id, grpId) pairs for commanders we've already announced
+    known_commanders: HashSet<(u8, u32)>,
 }
 
 impl GreParser {
@@ -32,6 +34,7 @@ impl GreParser {
             owner_map: HashMap::new(),
             game_number: 1,
             commander_casts: HashMap::new(),
+            known_commanders: HashSet::new(),
         }
     }
 
@@ -42,6 +45,7 @@ impl GreParser {
         self.owner_map.clear();
         self.game_number = 1;
         self.commander_casts.clear();
+        self.known_commanders.clear();
     }
 
     pub fn parse(&mut self, content: &str) -> Vec<GameEvent> {
@@ -103,15 +107,53 @@ impl GreParser {
 
         let update_type = gs.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-        // Full snapshot: rebuild zone and instance maps from scratch
         if update_type == "GameStateType_Full" {
             self.rebuild_maps(gs);
-            return vec![];
+            return self.detect_new_commanders(gs);
         }
 
-        // Diff: update maps with any new/changed objects and zones, then process annotations
         self.update_maps(gs);
-        self.process_zone_transfers(gs)
+        let mut events = self.detect_new_commanders(gs);
+        events.extend(self.process_zone_transfers(gs));
+        events
+    }
+
+    /// Scan gameObjects for any card currently in a Command zone, and emit a
+    /// CommanderRevealed event for each one we haven't announced yet.
+    fn detect_new_commanders(&mut self, gs: &Value) -> Vec<GameEvent> {
+        let objects = match gs.get("gameObjects").and_then(|o| o.as_array()) {
+            Some(o) => o,
+            None => return vec![],
+        };
+        let mut events = vec![];
+        for obj in objects {
+            let zone_id = match obj.get("zoneId").and_then(|z| z.as_u64()) {
+                Some(z) => z as u32,
+                None => continue,
+            };
+            let zone = match self.zone_map.get(&zone_id) {
+                Some(z) => z,
+                None => continue,
+            };
+            if zone.zone_type != "ZoneType_Command" {
+                continue;
+            }
+            let grp_id = match obj.get("grpId").and_then(|g| g.as_u64()) {
+                Some(g) => g as u32,
+                None => continue,
+            };
+            let owner = match obj.get("ownerSeatId").and_then(|o| o.as_u64()) {
+                Some(o) => o as u8,
+                None => continue,
+            };
+            if self.known_commanders.insert((owner, grp_id)) {
+                events.push(GameEvent::CommanderRevealed {
+                    card_id: grp_id,
+                    seat_id: owner,
+                });
+            }
+        }
+        events
     }
 
     fn rebuild_maps(&mut self, gs: &Value) {

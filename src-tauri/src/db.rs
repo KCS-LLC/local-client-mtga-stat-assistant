@@ -157,6 +157,19 @@ impl Db {
         Ok(())
     }
 
+    pub fn set_match_deck(
+        &self,
+        match_id: &str,
+        deck_id: &str,
+        deck_name: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE matches SET deck_id = ?1, deck_name = ?2 WHERE match_id = ?3",
+            params![deck_id, deck_name, match_id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_die_roll(&self, match_id: &str, won: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE matches SET won_die_roll = ?1 WHERE match_id = ?2",
