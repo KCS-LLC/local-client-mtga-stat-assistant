@@ -152,7 +152,7 @@ fn default_debug_log_path() -> std::path::PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     debug_log::init(default_debug_log_path());
-    dlog!("[startup] app starting");
+    dlog!("[startup] app starting (build supports PlayerIdentified, CommanderRevealed, instance_id, player deck tracker)");
 
     let db_path = default_db_path();
     dlog!("[startup] db path: {:?}", db_path);

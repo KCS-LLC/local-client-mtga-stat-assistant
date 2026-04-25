@@ -9,6 +9,18 @@ function cardLabel(id: number, info: Map<number, CardInfo>): string {
   return info.get(id)?.name ?? `Card #${id}`;
 }
 
+/** Sort entries [grpId, count] alphabetically by resolved card name. */
+function sortByName(
+  entries: Array<[number, number]>,
+  info: Map<number, CardInfo>,
+): Array<[number, number]> {
+  return entries.slice().sort((a, b) => {
+    const an = info.get(a[0])?.name ?? `Card #${a[0]}`;
+    const bn = info.get(b[0])?.name ?? `Card #${b[0]}`;
+    return an.localeCompare(bn);
+  });
+}
+
 function CommanderList({
   tax,
   info,
@@ -34,9 +46,35 @@ function CommanderList({
   );
 }
 
+/** Renders a list of [grpId, count] with "Name × N" formatting. */
+function CardCountList({
+  entries,
+  info,
+}: {
+  entries: Array<[number, number]>;
+  info: Map<number, CardInfo>;
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <ul className="space-y-1 mt-3 max-h-96 overflow-auto">
+      {sortByName(entries, info).map(([id, count]) => (
+        <li
+          key={id}
+          className="flex justify-between text-zinc-700 dark:text-zinc-300"
+        >
+          <span>{cardLabel(id, info)}</span>
+          {count > 1 && (
+            <span className="text-zinc-500 ml-2">× {count}</span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function InGameView({ state }: Props) {
-  const cardsThisGame =
-    state.opponentCards.get(state.gameNumber) ?? new Set<number>();
+  const instancesThisGame =
+    state.opponentInstances.get(state.gameNumber) ?? new Map<number, number>();
   const playerTax =
     state.playerSeatId !== null
       ? state.commanderTax.get(state.playerSeatId)
@@ -46,25 +84,37 @@ export function InGameView({ state }: Props) {
       ? state.commanderTax.get(state.opponentSeatId)
       : undefined;
 
-  // Collect every grpId we want info for, then resolve them all at once
-  const allIds = new Set<number>(cardsThisGame);
+  // Collect every grpId we want info for
+  const allIds = new Set<number>();
+  for (const grpId of instancesThisGame.values()) allIds.add(grpId);
   if (playerTax) for (const id of playerTax.keys()) allIds.add(id);
   if (opponentTax) for (const id of opponentTax.keys()) allIds.add(id);
+  if (state.playerDeck) for (const id of state.playerDeck.keys()) allIds.add(id);
   const info = useCardInfo(allIds);
 
-  // Filter tokens out of the opponent's "cards seen" list — they don't exist
-  // outside the game and would clutter the deck-tracking view. Tokens we
-  // haven't resolved yet (info missing) get optimistically shown; once the
-  // lookup resolves and is_token = true, they drop out.
-  const realCardsThisGame = new Set<number>();
-  let tokenCount = 0;
-  for (const id of cardsThisGame) {
-    if (info.get(id)?.is_token) {
-      tokenCount += 1;
+  // Aggregate opponent's seen cards by grpId, filtering out tokens
+  const opponentByGrp = new Map<number, number>();
+  let tokenInstances = 0;
+  for (const grpId of instancesThisGame.values()) {
+    if (info.get(grpId)?.is_token) {
+      tokenInstances += 1;
     } else {
-      realCardsThisGame.add(id);
+      opponentByGrp.set(grpId, (opponentByGrp.get(grpId) ?? 0) + 1);
     }
   }
+  const opponentEntries = Array.from(opponentByGrp.entries());
+  const totalRealOpponentInstances = opponentEntries.reduce(
+    (sum, [, c]) => sum + c,
+    0,
+  );
+
+  // Player deck — exclude commander (shown separately)
+  const playerDeckEntries = state.playerDeck
+    ? Array.from(state.playerDeck.entries()).filter(
+        ([id]) => !(playerTax && playerTax.has(id)),
+      )
+    : [];
+  const playerDeckTotal = playerDeckEntries.reduce((sum, [, q]) => sum + q, 0);
 
   return (
     <div className="grid grid-cols-2 gap-4 p-4 h-full">
@@ -83,6 +133,14 @@ export function InGameView({ state }: Props) {
 
         <CommanderList tax={playerTax} info={info} />
 
+        <div className="mt-4 text-sm">
+          <div className="mb-2 flex justify-between">
+            <span className="text-zinc-500">Deck</span>
+            <span>{playerDeckTotal} cards</span>
+          </div>
+          <CardCountList entries={playerDeckEntries} info={info} />
+        </div>
+
         <div className="mt-6 text-sm italic text-zinc-500">
           Draw odds — coming soon
         </div>
@@ -98,23 +156,15 @@ export function InGameView({ state }: Props) {
         <div className="mt-4 text-sm">
           <div className="mb-2 flex justify-between">
             <span className="text-zinc-500">Cards seen this game</span>
-            <span>{realCardsThisGame.size}</span>
+            <span>{totalRealOpponentInstances}</span>
           </div>
-          {tokenCount > 0 && (
+          {tokenInstances > 0 && (
             <div className="mb-2 flex justify-between text-xs text-zinc-500">
               <span>Tokens (not counted)</span>
-              <span>{tokenCount}</span>
+              <span>{tokenInstances}</span>
             </div>
           )}
-          {realCardsThisGame.size > 0 && (
-            <ul className="space-y-1 mt-3 max-h-96 overflow-auto">
-              {Array.from(realCardsThisGame).map((id) => (
-                <li key={id} className="text-zinc-700 dark:text-zinc-300">
-                  {cardLabel(id, info)}
-                </li>
-              ))}
-            </ul>
-          )}
+          <CardCountList entries={opponentEntries} info={info} />
         </div>
       </section>
     </div>

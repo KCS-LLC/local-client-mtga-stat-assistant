@@ -74,6 +74,7 @@ pub enum GameEvent {
     },
     /// A card moved between zones
     ZoneChanged {
+        instance_id: u32,
         card_id: u32,
         from_zone: Zone,
         to_zone: Zone,

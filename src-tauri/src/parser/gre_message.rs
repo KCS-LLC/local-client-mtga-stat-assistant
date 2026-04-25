@@ -336,6 +336,7 @@ impl GreParser {
                 .unwrap_or(false);
 
         let mut events = vec![GameEvent::ZoneChanged {
+            instance_id,
             card_id,
             from_zone: Zone::from_str(&src_zone_type),
             to_zone: Zone::from_str(&dst_zone_type),

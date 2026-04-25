@@ -46,6 +46,7 @@ export type GameEvent =
   | { type: "DeckLoaded"; cards: DeckCard[]; commander: number | null }
   | {
       type: "ZoneChanged";
+      instance_id: number;
       card_id: number;
       from_zone: Zone;
       to_zone: Zone;

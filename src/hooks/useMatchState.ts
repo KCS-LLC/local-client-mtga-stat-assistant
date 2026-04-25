@@ -12,10 +12,14 @@ export interface MatchState {
   playerSeatId: number | null;
   opponentSeatId: number | null;
   gameNumber: number;
-  // Cards seen on opponent's battlefield, grouped by game number
-  opponentCards: Map<number, Set<number>>;
+  // game_number → (instance_id → grp_id) for unique cards seen on opponent's
+  // battlefield. Tracking by instance_id avoids double-counting when cards
+  // bounce in and out. Display layer groups by grp_id and counts.
+  opponentInstances: Map<number, Map<number, number>>;
   // seat_id → (grpId → current commander tax)
   commanderTax: Map<number, Map<number, number>>;
+  // Player's own deck for this match: grp_id → quantity (includes commander)
+  playerDeck: Map<number, number> | null;
   // Diagnostic
   eventCount: number;
   lastEventType: string | null;
@@ -35,8 +39,9 @@ function initial(): MatchState {
     playerSeatId: null,
     opponentSeatId: null,
     gameNumber: 1,
-    opponentCards: new Map(),
+    opponentInstances: new Map(),
     commanderTax: new Map(),
+    playerDeck: null,
     eventCount: 0,
     lastEventType: null,
   };
@@ -67,8 +72,9 @@ function reducer(state: MatchState, action: Action): MatchState {
         playerSeatId: e.player1.seat_id,
         opponentSeatId: e.player2.seat_id,
         gameNumber: 1,
-        opponentCards: new Map(),
+        opponentInstances: new Map(),
         commanderTax: new Map(),
+        playerDeck: null,
       };
 
     case "PlayerIdentified":
@@ -91,13 +97,27 @@ function reducer(state: MatchState, action: Action): MatchState {
         e.owner_seat_id === state.opponentSeatId &&
         !e.face_down
       ) {
-        const map = new Map(state.opponentCards);
-        const set = new Set(map.get(state.gameNumber) ?? []);
-        set.add(e.card_id);
-        map.set(state.gameNumber, set);
-        return { ...state, opponentCards: map };
+        const byGame = new Map(state.opponentInstances);
+        const instanceMap = new Map(byGame.get(state.gameNumber) ?? []);
+        // Keying by instance_id dedupes the same physical card bouncing
+        // in and out, but lets us still count multiple copies of the same
+        // grpId (different instance_ids → different entries).
+        instanceMap.set(e.instance_id, e.card_id);
+        byGame.set(state.gameNumber, instanceMap);
+        return { ...state, opponentInstances: byGame };
       }
       return state;
+    }
+
+    case "DeckLoaded": {
+      const deck = new Map<number, number>();
+      for (const c of e.cards) {
+        deck.set(c.card_id, (deck.get(c.card_id) ?? 0) + c.quantity);
+      }
+      if (e.commander != null) {
+        deck.set(e.commander, (deck.get(e.commander) ?? 0) + 1);
+      }
+      return { ...state, playerDeck: deck };
     }
 
     case "CommanderRevealed": {
