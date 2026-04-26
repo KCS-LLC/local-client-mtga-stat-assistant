@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface Props {
@@ -17,6 +18,27 @@ export function StatusBar({
   theme,
   onToggleTheme,
 }: Props) {
+  const [copyState, setCopyState] = useState<"idle" | "copying" | "ok" | "err">(
+    "idle",
+  );
+  const [copyMsg, setCopyMsg] = useState<string>("");
+
+  async function copyLogs() {
+    setCopyState("copying");
+    setCopyMsg("");
+    try {
+      const result = await invoke<string>("copy_logs_for_review");
+      setCopyState("ok");
+      setCopyMsg(result);
+    } catch (e) {
+      setCopyState("err");
+      setCopyMsg(String(e));
+    }
+    setTimeout(() => {
+      setCopyState("idle");
+      setCopyMsg("");
+    }, 4000);
+  }
   const status: "red" | "yellow" | "green" = !mtgaRunning
     ? "red"
     : inMatch
@@ -55,6 +77,27 @@ export function StatusBar({
           events: {eventCount}
           {lastEventType ? ` · last: ${lastEventType}` : ""}
         </span>
+        <button
+          type="button"
+          onClick={copyLogs}
+          disabled={copyState === "copying"}
+          title={copyMsg || "Snapshot Player.log and debug.log to working folder"}
+          className={`text-xs px-2 py-1 rounded ${
+            copyState === "ok"
+              ? "bg-green-600 text-white"
+              : copyState === "err"
+                ? "bg-red-600 text-white"
+                : "border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          }`}
+        >
+          {copyState === "copying"
+            ? "Copying…"
+            : copyState === "ok"
+              ? "Copied ✓"
+              : copyState === "err"
+                ? "Failed ✗"
+                : "Copy logs"}
+        </button>
         <button
           type="button"
           onClick={onToggleTheme}

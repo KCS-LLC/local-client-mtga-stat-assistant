@@ -55,6 +55,30 @@ fn get_card_info(
         .unwrap_or_default()
 }
 
+/// Snapshot Player.log and debug.log into the parent folder for inspection.
+/// Hardcoded destination is the working directory I (Claude) can read while
+/// developing — saves the user from manually copying files between sessions.
+#[tauri::command]
+fn copy_logs_for_review() -> Result<String, String> {
+    let dest_dir = std::path::PathBuf::from("C:/Users/renga/Claude/MTGA");
+    if !dest_dir.exists() {
+        return Err(format!("destination not found: {:?}", dest_dir));
+    }
+    let pairs = [
+        (default_log_path(), "Player.log"),
+        (default_debug_log_path(), "debug.log"),
+    ];
+    let mut copied: Vec<String> = vec![];
+    for (src, name) in &pairs {
+        let dst = dest_dir.join(name);
+        match std::fs::copy(src, &dst) {
+            Ok(bytes) => copied.push(format!("{} ({} bytes)", name, bytes)),
+            Err(e) => return Err(format!("copy {}: {}", name, e)),
+        }
+    }
+    Ok(copied.join(", "))
+}
+
 fn default_log_path() -> std::path::PathBuf {
     let app_data = std::env::var("APPDATA").unwrap_or_default();
     let local_low = std::path::Path::new(&app_data)
@@ -177,7 +201,8 @@ pub fn run() {
             get_mtga_status,
             get_wl_stats,
             get_match_history,
-            get_card_info
+            get_card_info,
+            copy_logs_for_review
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
