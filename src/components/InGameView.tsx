@@ -72,6 +72,43 @@ function CardCountList({
   );
 }
 
+/** Decklist with live library counts + next-draw probability per card. */
+function LibraryWithOdds({
+  entries,
+  info,
+  librarySize,
+}: {
+  entries: Array<[number, number]>;
+  info: Map<number, CardInfo>;
+  librarySize: number;
+}) {
+  if (entries.length === 0) return null;
+  // Sort: still-in-library first (by name), then exhausted entries last
+  const sorted = sortByName(entries, info).filter(([, c]) => c > 0);
+  return (
+    <ul className="space-y-1 mt-1 max-h-96 overflow-auto text-xs">
+      {sorted.map(([id, count]) => {
+        const pct = librarySize > 0 ? (count / librarySize) * 100 : 0;
+        const isLand = info.get(id)?.is_land === true;
+        return (
+          <li
+            key={id}
+            className="flex justify-between gap-2 text-zinc-700 dark:text-zinc-300"
+          >
+            <span className={isLand ? "text-emerald-700 dark:text-emerald-400" : ""}>
+              {cardLabel(id, info)}
+            </span>
+            <span className="text-zinc-500 tabular-nums whitespace-nowrap">
+              {count > 1 ? `${count}×  ` : ""}
+              {pct.toFixed(1)}%
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function InGameView({ state }: Props) {
   const opponentThisGame =
     state.opponentInstances.get(state.gameNumber) ?? new Map<number, number>();
@@ -115,13 +152,22 @@ export function InGameView({ state }: Props) {
   const opponent = aggregate(opponentThisGame);
   const player = aggregate(playerThisGame);
 
-  // Player deck — exclude commander (shown separately)
-  const playerDeckEntries = state.playerDeck
-    ? Array.from(state.playerDeck.entries()).filter(
+  // Live library — exclude commanders (in the command zone, not library)
+  const libraryEntries = state.playerLibrary
+    ? Array.from(state.playerLibrary.entries()).filter(
         ([id]) => !(playerTax && playerTax.has(id)),
       )
     : [];
-  const playerDeckTotal = playerDeckEntries.reduce((sum, [, q]) => sum + q, 0);
+  const librarySize = state.playerLibrarySize;
+
+  // Lands remaining in library (uses card-info lookup; falls back to 0 if
+  // the card hasn't resolved yet — the count will firm up as info arrives)
+  const landsInLibrary = libraryEntries.reduce(
+    (sum, [id, q]) => sum + (info.get(id)?.is_land ? q : 0),
+    0,
+  );
+  const landNextDrawPct =
+    librarySize > 0 ? (landsInLibrary / librarySize) * 100 : 0;
 
   return (
     <div className="grid grid-cols-2 gap-4 p-4 h-full">
@@ -155,15 +201,21 @@ export function InGameView({ state }: Props) {
         </div>
 
         <div className="mt-6 text-sm">
-          <div className="mb-2 flex justify-between">
-            <span className="text-zinc-500">Decklist</span>
-            <span>{playerDeckTotal} cards</span>
+          <div className="flex justify-between mb-1">
+            <span className="text-zinc-500">Library</span>
+            <span>{librarySize} cards</span>
           </div>
-          <CardCountList entries={playerDeckEntries} info={info} />
-        </div>
-
-        <div className="mt-6 text-sm italic text-zinc-500">
-          Draw odds — coming soon
+          <div className="flex justify-between mb-3 text-xs text-zinc-500">
+            <span>Next draw: land</span>
+            <span>
+              {landsInLibrary} / {librarySize} ({landNextDrawPct.toFixed(1)}%)
+            </span>
+          </div>
+          <LibraryWithOdds
+            entries={libraryEntries}
+            info={info}
+            librarySize={librarySize}
+          />
         </div>
       </section>
 

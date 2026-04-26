@@ -10,6 +10,7 @@ use std::time::Duration;
 pub struct CardDatabase {
     names: HashMap<u32, String>,
     tokens: HashSet<u32>,
+    lands: HashSet<u32>,
     /// Path of the .mtga file we loaded; used by the watcher to detect updates.
     /// None when no database was found (e.g. MTGA not yet installed).
     loaded_path: Option<PathBuf>,
@@ -19,6 +20,7 @@ pub struct CardDatabase {
 pub struct CardInfo {
     pub name: String,
     pub is_token: bool,
+    pub is_land: bool,
 }
 
 impl CardDatabase {
@@ -26,9 +28,10 @@ impl CardDatabase {
         match Self::try_load() {
             Ok(db) => {
                 dlog!(
-                    "[cards] loaded {} names ({} tokens) from {:?}",
+                    "[cards] loaded {} names ({} tokens, {} lands) from {:?}",
                     db.names.len(),
                     db.tokens.len(),
+                    db.lands.len(),
                     db.loaded_path
                 );
                 db
@@ -53,7 +56,7 @@ impl CardDatabase {
 
         let mut stmt = conn
             .prepare(
-                "SELECT c.GrpId, c.IsToken, l.Loc
+                "SELECT c.GrpId, c.IsToken, c.Types, l.Loc
                  FROM Cards c
                  JOIN Localizations_enUS l ON l.LocId = c.TitleId
                  WHERE l.Formatted = 1",
@@ -66,23 +69,32 @@ impl CardDatabase {
                     row.get::<_, i64>(0)? as u32,
                     row.get::<_, bool>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
                 ))
             })
             .map_err(|e| format!("query: {}", e))?;
 
         let mut names = HashMap::new();
         let mut tokens = HashSet::new();
+        let mut lands = HashSet::new();
         for row in rows.flatten() {
-            let (grp, is_token, name) = row;
+            let (grp, is_token, types, name) = row;
             names.insert(grp, name);
             if is_token {
                 tokens.insert(grp);
+            }
+            // Types is a comma-separated list of CardType enum integers.
+            // 5 = Land per the Enums table. A card is a land if 5 appears
+            // anywhere in the list (e.g. "5", "5,2" creature-land, "1,5" artifact-land).
+            if types.split(',').any(|t| t.trim() == "5") {
+                lands.insert(grp);
             }
         }
 
         Ok(Self {
             names,
             tokens,
+            lands,
             loaded_path: Some(path),
         })
     }
@@ -97,6 +109,7 @@ impl CardDatabase {
                         CardInfo {
                             name: name.clone(),
                             is_token: self.tokens.contains(id),
+                            is_land: self.lands.contains(id),
                         },
                     )
                 })

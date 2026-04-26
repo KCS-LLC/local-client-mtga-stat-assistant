@@ -23,6 +23,9 @@ export interface MatchState {
   commanderTax: Map<number, Map<number, number>>;
   // Player's own deck for this match: grp_id → quantity (includes commander)
   playerDeck: Map<number, number> | null;
+  // Player's library state (decremented as cards leave Library)
+  playerLibrary: Map<number, number> | null;
+  playerLibrarySize: number;
   // Diagnostic
   eventCount: number;
   lastEventType: string | null;
@@ -46,6 +49,8 @@ function initial(): MatchState {
     playerInstances: new Map(),
     commanderTax: new Map(),
     playerDeck: null,
+    playerLibrary: null,
+    playerLibrarySize: 0,
     eventCount: 0,
     lastEventType: null,
   };
@@ -80,6 +85,8 @@ function reducer(state: MatchState, action: Action): MatchState {
         playerInstances: new Map(),
         commanderTax: new Map(),
         playerDeck: null,
+        playerLibrary: null,
+        playerLibrarySize: 0,
       };
 
     case "PlayerIdentified":
@@ -97,6 +104,29 @@ function reducer(state: MatchState, action: Action): MatchState {
       return { ...state, gameNumber: e.game_number + 1 };
 
     case "ZoneChanged": {
+      let next = state;
+
+      // Decrement player's library when a card leaves it (drawn, milled,
+      // tutored, scryed away, etc.) — for our seat only. We don't track the
+      // opponent's library because their card identities are hidden.
+      if (
+        e.from_zone === "Library" &&
+        e.owner_seat_id === state.playerSeatId &&
+        next.playerLibrary !== null
+      ) {
+        const lib = new Map(next.playerLibrary);
+        const count = lib.get(e.card_id);
+        if (count !== undefined) {
+          if (count > 1) lib.set(e.card_id, count - 1);
+          else lib.delete(e.card_id);
+          next = {
+            ...next,
+            playerLibrary: lib,
+            playerLibrarySize: Math.max(0, next.playerLibrarySize - 1),
+          };
+        }
+      }
+
       // Track the first time we see a card hit Stack or Battlefield. Stack
       // covers cast spells that resolve to graveyard (Adventurous Impulse).
       // Battlefield covers lands and resolved permanents. First-write-wins
@@ -107,19 +137,19 @@ function reducer(state: MatchState, action: Action): MatchState {
       ) {
         const isPlayer = e.owner_seat_id === state.playerSeatId;
         const isOpponent = e.owner_seat_id === state.opponentSeatId;
-        if (!isPlayer && !isOpponent) return state;
+        if (!isPlayer && !isOpponent) return next;
 
-        const target = isOpponent ? state.opponentInstances : state.playerInstances;
+        const target = isOpponent ? next.opponentInstances : next.playerInstances;
         const byGame = new Map(target);
         const instanceMap = new Map(byGame.get(state.gameNumber) ?? []);
-        if (instanceMap.has(e.instance_id)) return state;
+        if (instanceMap.has(e.instance_id)) return next;
         instanceMap.set(e.instance_id, e.card_id);
         byGame.set(state.gameNumber, instanceMap);
         return isOpponent
-          ? { ...state, opponentInstances: byGame }
-          : { ...state, playerInstances: byGame };
+          ? { ...next, opponentInstances: byGame }
+          : { ...next, playerInstances: byGame };
       }
-      return state;
+      return next;
     }
 
     case "DeckLoaded": {
@@ -130,7 +160,24 @@ function reducer(state: MatchState, action: Action): MatchState {
       if (e.commander != null) {
         deck.set(e.commander, (deck.get(e.commander) ?? 0) + 1);
       }
-      return { ...state, playerDeck: deck };
+      // Library starts as a copy of the deck. Commanders sit in the Command
+      // zone, not the library — exclude them from the initial library count.
+      const library = new Map(deck);
+      if (e.commander != null) {
+        const c = library.get(e.commander) ?? 0;
+        if (c > 1) library.set(e.commander, c - 1);
+        else library.delete(e.commander);
+      }
+      const librarySize = Array.from(library.values()).reduce(
+        (sum, q) => sum + q,
+        0,
+      );
+      return {
+        ...state,
+        playerDeck: deck,
+        playerLibrary: library,
+        playerLibrarySize: librarySize,
+      };
     }
 
     case "CommanderRevealed": {
