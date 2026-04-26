@@ -50,36 +50,43 @@ impl GreParser {
     }
 
     pub fn parse(&mut self, content: &str) -> Vec<GameEvent> {
-        let v: Value = match serde_json::from_str(content) {
-            Ok(v) => v,
-            Err(e) => {
-                dlog!(
-                    "[gre] JSON parse failed ({} bytes, err: {}); first 120 chars: {:?}",
-                    content.len(),
-                    e,
-                    &content[..content.len().min(120)]
-                );
-                return vec![];
+        // MTGA occasionally writes two JSON objects back-to-back in the same
+        // chunk (no [UnityCrossThreadLogger] marker between them). serde_json
+        // ::from_str only parses one root value, so we'd silently lose every
+        // message in the second JSON. Use a streaming Deserializer instead.
+        let mut events = vec![];
+        let stream = serde_json::Deserializer::from_str(content).into_iter::<Value>();
+        for v_result in stream {
+            match v_result {
+                Ok(v) => events.extend(self.process_root_value(&v)),
+                Err(e) => {
+                    dlog!(
+                        "[gre] JSON parse stopped at byte ~{}: {}",
+                        e.column(),
+                        e
+                    );
+                    break;
+                }
             }
-        };
+        }
+        events
+    }
 
+    /// Process a single greToClientEvent root JSON object and return events
+    /// produced by its messages.
+    fn process_root_value(&mut self, v: &Value) -> Vec<GameEvent> {
         let messages = match v
             .get("greToClientEvent")
             .and_then(|e| e.get("greToClientMessages"))
             .and_then(|m| m.as_array())
         {
             Some(m) => m,
-            None => {
-                dlog!("[gre] no greToClientMessages array in chunk");
-                return vec![];
-            }
+            None => return vec![],
         };
 
-        let mut msg_types: Vec<&str> = vec![];
         let mut events = vec![];
         for msg in messages {
             let msg_type = msg.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            msg_types.push(msg_type);
             match msg_type {
                 "GREMessageType_ConnectResp" => {
                     if let Some(e) = self.parse_connect_resp(msg) {
@@ -105,12 +112,6 @@ impl GreParser {
                 _ => {}
             }
         }
-        dlog!(
-            "[gre] processed {} messages: {:?}; emitted {} events",
-            msg_types.len(),
-            msg_types,
-            events.len()
-        );
         events
     }
 
