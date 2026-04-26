@@ -16,6 +16,11 @@ pub struct EventSink {
     // the MatchStarted boundary because DeckLoaded (from ConnectResp) typically
     // fires *before* MatchStarted (from MatchGameRoomStateChange).
     last_loaded_deck: Option<HashMap<u32, u32>>,
+    // grpId of the local player's commander (from DeckLoaded.commander). Used
+    // to synthesize a CommanderRevealed for our side immediately on MatchStarted,
+    // since the gameObject scan in detect_new_commanders may miss the initial
+    // Full snapshot if the tailer started mid-session.
+    last_loaded_commander: Option<u32>,
     // True once we've successfully matched the current match's deck
     deck_identified: bool,
 }
@@ -31,6 +36,7 @@ impl EventSink {
             die_rolls: HashMap::new(),
             deck_snapshots: HashMap::new(),
             last_loaded_deck: None,
+            last_loaded_commander: None,
             deck_identified: false,
         }
     }
@@ -111,6 +117,17 @@ impl EventSink {
                     opponent_seat_id: opponent.seat_id,
                     opponent: opponent.clone(),
                 });
+
+                // Reveal the local player's commander now. detect_new_commanders
+                // depends on a Full GameStateMessage, which the tailer can miss
+                // when started mid-session. DeckLoaded gives us the grpId from
+                // ConnectResp, which is reliable.
+                if let Some(cmdr) = self.last_loaded_commander {
+                    emit.push(GameEvent::CommanderRevealed {
+                        card_id: cmdr,
+                        seat_id: me.seat_id,
+                    });
+                }
             }
 
             GameEvent::MatchEnded {
@@ -196,6 +213,7 @@ impl EventSink {
                     deck.entry(*cmdr).or_insert(1);
                 }
                 self.last_loaded_deck = Some(deck);
+                self.last_loaded_commander = *commander;
 
                 // If a match is already in progress (e.g. Bo3 sideboard via
                 // SubmitDeckReq), correlate now. Otherwise the correlation is
