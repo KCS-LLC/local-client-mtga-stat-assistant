@@ -72,6 +72,10 @@ function reducer(state: MatchState, action: Action): MatchState {
     case "MatchStarted":
       // Tentative — assume player1 = us. PlayerIdentified arrives next and
       // corrects this if the local player is actually player2 in this match.
+      // NOTE: do NOT reset playerDeck / playerLibrary here. DeckLoaded fires
+      // BEFORE MatchStarted (ConnectResp precedes matchGameRoomStateChange),
+      // so by the time MatchStarted arrives, DeckLoaded has already set the
+      // library for this match. Clearing it would wipe out fresh data.
       return {
         ...state,
         inMatch: true,
@@ -84,9 +88,6 @@ function reducer(state: MatchState, action: Action): MatchState {
         opponentInstances: new Map(),
         playerInstances: new Map(),
         commanderTax: new Map(),
-        playerDeck: null,
-        playerLibrary: null,
-        playerLibrarySize: 0,
       };
 
     case "PlayerIdentified":

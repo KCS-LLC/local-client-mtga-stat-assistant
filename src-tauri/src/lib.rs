@@ -187,7 +187,7 @@ fn default_debug_log_path() -> std::path::PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     debug_log::init(default_debug_log_path());
-    dlog!("[startup] app starting BUILD-2026-04-26-f (live library + per-card next-draw odds)");
+    dlog!("[startup] app starting BUILD-2026-04-26-g (MatchStarted no longer wipes DeckLoaded library)");
 
     let db_path = default_db_path();
     dlog!("[startup] db path: {:?}", db_path);

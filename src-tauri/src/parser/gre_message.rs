@@ -55,16 +55,21 @@ impl GreParser {
         // ::from_str only parses one root value, so we'd silently lose every
         // message in the second JSON. Use a streaming Deserializer instead.
         let mut events = vec![];
+        let mut parsed_count = 0;
         let stream = serde_json::Deserializer::from_str(content).into_iter::<Value>();
         for v_result in stream {
             match v_result {
-                Ok(v) => events.extend(self.process_root_value(&v)),
+                Ok(v) => {
+                    parsed_count += 1;
+                    events.extend(self.process_root_value(&v));
+                }
                 Err(e) => {
-                    dlog!(
-                        "[gre] JSON parse stopped at byte ~{}: {}",
-                        e.column(),
-                        e
-                    );
+                    // Trailing non-JSON content (unmarked Unity log lines)
+                    // after a successful parse is expected and benign — only
+                    // log when we couldn't parse anything at all.
+                    if parsed_count == 0 {
+                        dlog!("[gre] JSON parse failed: {}", e);
+                    }
                     break;
                 }
             }
