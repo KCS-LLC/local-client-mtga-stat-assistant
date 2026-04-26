@@ -1,3 +1,4 @@
+use crate::dlog;
 use crate::events::{DeckCard, GameEvent, Zone};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -51,7 +52,15 @@ impl GreParser {
     pub fn parse(&mut self, content: &str) -> Vec<GameEvent> {
         let v: Value = match serde_json::from_str(content) {
             Ok(v) => v,
-            Err(_) => return vec![],
+            Err(e) => {
+                dlog!(
+                    "[gre] JSON parse failed ({} bytes, err: {}); first 120 chars: {:?}",
+                    content.len(),
+                    e,
+                    &content[..content.len().min(120)]
+                );
+                return vec![];
+            }
         };
 
         let messages = match v
@@ -60,12 +69,17 @@ impl GreParser {
             .and_then(|m| m.as_array())
         {
             Some(m) => m,
-            None => return vec![],
+            None => {
+                dlog!("[gre] no greToClientMessages array in chunk");
+                return vec![];
+            }
         };
 
+        let mut msg_types: Vec<&str> = vec![];
         let mut events = vec![];
         for msg in messages {
             let msg_type = msg.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            msg_types.push(msg_type);
             match msg_type {
                 "GREMessageType_ConnectResp" => {
                     if let Some(e) = self.parse_connect_resp(msg) {
@@ -91,6 +105,12 @@ impl GreParser {
                 _ => {}
             }
         }
+        dlog!(
+            "[gre] processed {} messages: {:?}; emitted {} events",
+            msg_types.len(),
+            msg_types,
+            events.len()
+        );
         events
     }
 
