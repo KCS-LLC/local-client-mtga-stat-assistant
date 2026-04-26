@@ -220,14 +220,17 @@ impl Db {
     // --- queries ---
 
     pub fn get_wl_stats(&self) -> Result<Vec<DeckWL>> {
+        // Only group identified decks. Matches with NULL deck_name (correlation
+        // failed or pre-correlation data) are not aggregated here — they would
+        // all merge under one bucket and obscure real per-deck stats.
         let mut stmt = self.conn.prepare(
             "SELECT
-               COALESCE(deck_name, 'Unknown Deck') AS name,
+               deck_name AS name,
                SUM(CASE WHEN result = 'Win'  THEN 1 ELSE 0 END) AS wins,
                SUM(CASE WHEN result = 'Loss' THEN 1 ELSE 0 END) AS losses
              FROM matches
-             WHERE result IS NOT NULL
-             GROUP BY name
+             WHERE result IS NOT NULL AND deck_name IS NOT NULL
+             GROUP BY deck_name
              ORDER BY (wins + losses) DESC",
         )?;
         let rows = stmt.query_map([], |row| {

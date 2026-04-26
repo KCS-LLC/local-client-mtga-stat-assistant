@@ -73,8 +73,10 @@ function CardCountList({
 }
 
 export function InGameView({ state }: Props) {
-  const instancesThisGame =
+  const opponentThisGame =
     state.opponentInstances.get(state.gameNumber) ?? new Map<number, number>();
+  const playerThisGame =
+    state.playerInstances.get(state.gameNumber) ?? new Map<number, number>();
   const playerTax =
     state.playerSeatId !== null
       ? state.commanderTax.get(state.playerSeatId)
@@ -86,27 +88,32 @@ export function InGameView({ state }: Props) {
 
   // Collect every grpId we want info for
   const allIds = new Set<number>();
-  for (const grpId of instancesThisGame.values()) allIds.add(grpId);
+  for (const grpId of opponentThisGame.values()) allIds.add(grpId);
+  for (const grpId of playerThisGame.values()) allIds.add(grpId);
   if (playerTax) for (const id of playerTax.keys()) allIds.add(id);
   if (opponentTax) for (const id of opponentTax.keys()) allIds.add(id);
   if (state.playerDeck) for (const id of state.playerDeck.keys()) allIds.add(id);
   const info = useCardInfo(allIds);
 
-  // Aggregate opponent's seen cards by grpId, filtering out tokens
-  const opponentByGrp = new Map<number, number>();
-  let tokenInstances = 0;
-  for (const grpId of instancesThisGame.values()) {
-    if (info.get(grpId)?.is_token) {
-      tokenInstances += 1;
-    } else {
-      opponentByGrp.set(grpId, (opponentByGrp.get(grpId) ?? 0) + 1);
+  // Aggregate played cards by grpId, filtering out tokens
+  function aggregate(
+    instances: Map<number, number>,
+  ): { entries: Array<[number, number]>; tokens: number; total: number } {
+    const byGrp = new Map<number, number>();
+    let tokens = 0;
+    for (const grpId of instances.values()) {
+      if (info.get(grpId)?.is_token) {
+        tokens += 1;
+      } else {
+        byGrp.set(grpId, (byGrp.get(grpId) ?? 0) + 1);
+      }
     }
+    const entries = Array.from(byGrp.entries());
+    const total = entries.reduce((sum, [, c]) => sum + c, 0);
+    return { entries, tokens, total };
   }
-  const opponentEntries = Array.from(opponentByGrp.entries());
-  const totalRealOpponentInstances = opponentEntries.reduce(
-    (sum, [, c]) => sum + c,
-    0,
-  );
+  const opponent = aggregate(opponentThisGame);
+  const player = aggregate(playerThisGame);
 
   // Player deck — exclude commander (shown separately)
   const playerDeckEntries = state.playerDeck
@@ -135,7 +142,21 @@ export function InGameView({ state }: Props) {
 
         <div className="mt-4 text-sm">
           <div className="mb-2 flex justify-between">
-            <span className="text-zinc-500">Deck</span>
+            <span className="text-zinc-500">Played this game</span>
+            <span>{player.total}</span>
+          </div>
+          {player.tokens > 0 && (
+            <div className="mb-2 flex justify-between text-xs text-zinc-500">
+              <span>Tokens (not counted)</span>
+              <span>{player.tokens}</span>
+            </div>
+          )}
+          <CardCountList entries={player.entries} info={info} />
+        </div>
+
+        <div className="mt-6 text-sm">
+          <div className="mb-2 flex justify-between">
+            <span className="text-zinc-500">Decklist</span>
             <span>{playerDeckTotal} cards</span>
           </div>
           <CardCountList entries={playerDeckEntries} info={info} />
@@ -156,15 +177,15 @@ export function InGameView({ state }: Props) {
         <div className="mt-4 text-sm">
           <div className="mb-2 flex justify-between">
             <span className="text-zinc-500">Cards seen this game</span>
-            <span>{totalRealOpponentInstances}</span>
+            <span>{opponent.total}</span>
           </div>
-          {tokenInstances > 0 && (
+          {opponent.tokens > 0 && (
             <div className="mb-2 flex justify-between text-xs text-zinc-500">
               <span>Tokens (not counted)</span>
-              <span>{tokenInstances}</span>
+              <span>{opponent.tokens}</span>
             </div>
           )}
-          <CardCountList entries={opponentEntries} info={info} />
+          <CardCountList entries={opponent.entries} info={info} />
         </div>
       </section>
     </div>

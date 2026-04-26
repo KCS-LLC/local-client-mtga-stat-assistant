@@ -12,6 +12,10 @@ pub struct EventSink {
     die_rolls: HashMap<u8, u32>,
     // deck_id → (deck_name, card_id → quantity); rebuilt as DeckSnapshot events arrive
     deck_snapshots: HashMap<String, (String, HashMap<u32, u32>)>,
+    // Most recently loaded deck (cards merged with commander). Survives across
+    // the MatchStarted boundary because DeckLoaded (from ConnectResp) typically
+    // fires *before* MatchStarted (from MatchGameRoomStateChange).
+    last_loaded_deck: Option<HashMap<u32, u32>>,
     // True once we've successfully matched the current match's deck
     deck_identified: bool,
 }
@@ -26,7 +30,27 @@ impl EventSink {
             current_game_number: 1,
             die_rolls: HashMap::new(),
             deck_snapshots: HashMap::new(),
+            last_loaded_deck: None,
             deck_identified: false,
+        }
+    }
+
+    fn try_correlate_deck(&mut self, match_id: &str, db: &mut Db) {
+        if self.deck_identified {
+            return;
+        }
+        let deck = match &self.last_loaded_deck {
+            Some(d) => d,
+            None => return,
+        };
+        let matched = self
+            .deck_snapshots
+            .iter()
+            .find(|(_, (_, snap_cards))| snap_cards == deck)
+            .map(|(id, (name, _))| (id.clone(), name.clone()));
+        if let Some((deck_id, name)) = matched {
+            let _ = db.set_match_deck(match_id, &deck_id, &name);
+            self.deck_identified = true;
         }
     }
 
@@ -75,6 +99,11 @@ impl EventSink {
                     &opponent.user_id,
                     *timestamp as i64,
                 );
+
+                // DeckLoaded usually arrives BEFORE MatchStarted (from ConnectResp
+                // vs MatchGameRoomStateChange ordering), so retroactively try to
+                // correlate the buffered deck against snapshots now.
+                self.try_correlate_deck(match_id, db);
 
                 // Tell the frontend which seat is the local player
                 emit.push(GameEvent::PlayerIdentified {
@@ -158,26 +187,21 @@ impl EventSink {
             }
 
             GameEvent::DeckLoaded { cards, commander } => {
-                if !self.deck_identified {
-                    if let Some(mid) = self.current_match_id.clone() {
-                        // DeckSnapshot lists the commander as part of `cards`,
-                        // but DeckLoaded keeps it separate, so add it here
-                        // before comparing or no Brawl/Commander deck will match.
-                        let mut loaded: HashMap<u32, u32> =
-                            cards.iter().map(|c| (c.card_id, c.quantity)).collect();
-                        if let Some(cmdr) = commander {
-                            loaded.entry(*cmdr).or_insert(1);
-                        }
-                        if let Some((deck_id, name)) = self
-                            .deck_snapshots
-                            .iter()
-                            .find(|(_, (_, snap_cards))| *snap_cards == loaded)
-                            .map(|(id, (name, _))| (id.clone(), name.clone()))
-                        {
-                            let _ = db.set_match_deck(&mid, &deck_id, &name);
-                            self.deck_identified = true;
-                        }
-                    }
+                // DeckSnapshot lists the commander as part of `cards`, but
+                // DeckLoaded keeps it separate, so merge here before any
+                // comparison. Otherwise no Brawl/Commander deck will match.
+                let mut deck: HashMap<u32, u32> =
+                    cards.iter().map(|c| (c.card_id, c.quantity)).collect();
+                if let Some(cmdr) = commander {
+                    deck.entry(*cmdr).or_insert(1);
+                }
+                self.last_loaded_deck = Some(deck);
+
+                // If a match is already in progress (e.g. Bo3 sideboard via
+                // SubmitDeckReq), correlate now. Otherwise the correlation is
+                // deferred until MatchStarted fires.
+                if let Some(mid) = self.current_match_id.clone() {
+                    self.try_correlate_deck(&mid, db);
                 }
             }
 

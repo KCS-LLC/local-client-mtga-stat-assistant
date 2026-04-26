@@ -12,10 +12,13 @@ export interface MatchState {
   playerSeatId: number | null;
   opponentSeatId: number | null;
   gameNumber: number;
-  // game_number → (instance_id → grp_id) for unique cards seen on opponent's
-  // battlefield. Tracking by instance_id avoids double-counting when cards
-  // bounce in and out. Display layer groups by grp_id and counts.
+  // game_number → (instance_id → grp_id) for unique cards we've seen the
+  // opponent put on the Stack or Battlefield this game. Tracking by
+  // instance_id dedupes the same physical card moving zones (cast + resolve
+  // is two events but one instance). Display layer groups by grp_id and counts.
   opponentInstances: Map<number, Map<number, number>>;
+  // Same shape, but the player's own cast/played cards.
+  playerInstances: Map<number, Map<number, number>>;
   // seat_id → (grpId → current commander tax)
   commanderTax: Map<number, Map<number, number>>;
   // Player's own deck for this match: grp_id → quantity (includes commander)
@@ -40,6 +43,7 @@ function initial(): MatchState {
     opponentSeatId: null,
     gameNumber: 1,
     opponentInstances: new Map(),
+    playerInstances: new Map(),
     commanderTax: new Map(),
     playerDeck: null,
     eventCount: 0,
@@ -73,6 +77,7 @@ function reducer(state: MatchState, action: Action): MatchState {
         opponentSeatId: e.player2.seat_id,
         gameNumber: 1,
         opponentInstances: new Map(),
+        playerInstances: new Map(),
         commanderTax: new Map(),
         playerDeck: null,
       };
@@ -92,19 +97,27 @@ function reducer(state: MatchState, action: Action): MatchState {
       return { ...state, gameNumber: e.game_number + 1 };
 
     case "ZoneChanged": {
+      // Track the first time we see a card hit Stack or Battlefield. Stack
+      // covers cast spells that resolve to graveyard (Adventurous Impulse).
+      // Battlefield covers lands and resolved permanents. First-write-wins
+      // keeps the dedupe-by-instance semantics correct.
       if (
-        e.to_zone === "Battlefield" &&
-        e.owner_seat_id === state.opponentSeatId &&
+        (e.to_zone === "Battlefield" || e.to_zone === "Stack") &&
         !e.face_down
       ) {
-        const byGame = new Map(state.opponentInstances);
+        const isPlayer = e.owner_seat_id === state.playerSeatId;
+        const isOpponent = e.owner_seat_id === state.opponentSeatId;
+        if (!isPlayer && !isOpponent) return state;
+
+        const target = isOpponent ? state.opponentInstances : state.playerInstances;
+        const byGame = new Map(target);
         const instanceMap = new Map(byGame.get(state.gameNumber) ?? []);
-        // Keying by instance_id dedupes the same physical card bouncing
-        // in and out, but lets us still count multiple copies of the same
-        // grpId (different instance_ids → different entries).
+        if (instanceMap.has(e.instance_id)) return state;
         instanceMap.set(e.instance_id, e.card_id);
         byGame.set(state.gameNumber, instanceMap);
-        return { ...state, opponentInstances: byGame };
+        return isOpponent
+          ? { ...state, opponentInstances: byGame }
+          : { ...state, playerInstances: byGame };
       }
       return state;
     }

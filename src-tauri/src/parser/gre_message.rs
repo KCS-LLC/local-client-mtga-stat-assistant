@@ -350,7 +350,12 @@ impl GreParser {
                 *entry += 1;
                 *entry
             };
-            let tax = if cast_count > 1 { (cast_count - 1) * 2 } else { 0 };
+            // tax is the additional cost for the NEXT cast attempt — i.e. what
+            // it'll cost if the commander dies and is recast. After 1 cast,
+            // next cast costs +2. After 2 casts, +4. This way the UI can show
+            // the upcoming penalty as soon as the commander leaves the
+            // battlefield, not only after the recast.
+            let tax = cast_count * 2;
             events.push(GameEvent::CommanderCast {
                 card_id,
                 seat_id: owner_seat_id,
