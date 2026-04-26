@@ -283,6 +283,17 @@ impl Db {
         rows.collect()
     }
 
+    /// Wipe match-related data (matches, games, opponent_cards) but keep
+    /// deck_snapshots (still useful for future correlation) and settings.
+    pub fn reset_stats(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "DELETE FROM opponent_cards;
+             DELETE FROM games;
+             DELETE FROM matches;",
+        )?;
+        Ok(())
+    }
+
     pub fn get_match_history(&self, limit: u32) -> Result<Vec<MatchRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT match_id, format, opponent_name, deck_name, result,

@@ -45,6 +45,14 @@ fn get_match_history(db: State<Arc<Mutex<Db>>>) -> Result<Vec<MatchRecord>, Stri
 }
 
 #[tauri::command]
+fn reset_stats(db: State<Arc<Mutex<Db>>>) -> Result<(), String> {
+    db.lock()
+        .map_err(|e| e.to_string())?
+        .reset_stats()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_card_info(
     grp_ids: Vec<u32>,
     cards: State<SharedCards>,
@@ -179,7 +187,7 @@ fn default_debug_log_path() -> std::path::PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     debug_log::init(default_debug_log_path());
-    dlog!("[startup] app starting BUILD-2026-04-26-d (parser handles multi-JSON chunks via streaming Deserializer)");
+    dlog!("[startup] app starting BUILD-2026-04-26-e (multi-JSON parser, reset stats button)");
 
     let db_path = default_db_path();
     dlog!("[startup] db path: {:?}", db_path);
@@ -205,7 +213,8 @@ pub fn run() {
             get_wl_stats,
             get_match_history,
             get_card_info,
-            copy_logs_for_review
+            copy_logs_for_review,
+            reset_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

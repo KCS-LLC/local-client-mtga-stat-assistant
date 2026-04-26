@@ -5,20 +5,70 @@ import type { DeckWL, MatchRecord } from "../types/db";
 export function OutOfGameView() {
   const [stats, setStats] = useState<DeckWL[]>([]);
   const [history, setHistory] = useState<MatchRecord[]>([]);
+  const [confirming, setConfirming] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
-  useEffect(() => {
+  function refresh() {
     invoke<DeckWL[]>("get_wl_stats")
       .then(setStats)
       .catch(() => {});
     invoke<MatchRecord[]>("get_match_history")
       .then(setHistory)
       .catch(() => {});
+  }
+
+  useEffect(() => {
+    refresh();
   }, []);
+
+  async function doReset() {
+    setResetting(true);
+    try {
+      await invoke("reset_stats");
+      refresh();
+    } catch {
+      // ignore — stale data will linger but it's not destructive
+    }
+    setResetting(false);
+    setConfirming(false);
+  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-8">
       <section>
-        <h2 className="text-lg font-semibold mb-3">Win/Loss by deck</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold">Win/Loss by deck</h2>
+          {confirming ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-zinc-500">Delete all match history?</span>
+              <button
+                type="button"
+                onClick={doReset}
+                disabled={resetting}
+                className="px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+              >
+                {resetting ? "Resetting…" : "Yes, reset"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                disabled={resetting}
+                className="px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              className="text-xs px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+              title="Wipe matches, games, and opponent_cards (keeps deck snapshots and settings)"
+            >
+              Reset stats
+            </button>
+          )}
+        </div>
         {stats.length === 0 ? (
           <p className="text-sm text-zinc-500">No completed matches yet.</p>
         ) : (
