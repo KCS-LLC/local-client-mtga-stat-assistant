@@ -143,7 +143,10 @@ fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>, cards: SharedCard
         segmenter::start(line_rx, chunk_tx);
         router::start(chunk_rx, event_tx);
 
-        let mut sink = EventSink::new();
+        let mut sink = {
+            let guard = db.lock().expect("db lock for sink init");
+            EventSink::new(&guard)
+        };
 
         for event in event_rx {
             dlog!("[event] {:?}", event);
@@ -176,7 +179,7 @@ fn default_debug_log_path() -> std::path::PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     debug_log::init(default_debug_log_path());
-    dlog!("[startup] app starting BUILD-2026-04-26 (player commander via DeckLoaded, stack arrivals, deck correlation order fixed, tax = next cast)");
+    dlog!("[startup] app starting BUILD-2026-04-26-b (deck snapshots persisted to DB, player commander via DeckLoaded, stack arrivals, tax = next cast)");
 
     let db_path = default_db_path();
     dlog!("[startup] db path: {:?}", db_path);

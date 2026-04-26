@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection, Result};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 
 pub struct Db {
@@ -76,6 +77,12 @@ impl Db {
                 game_number INTEGER NOT NULL,
                 card_id     INTEGER NOT NULL,
                 UNIQUE(match_id, game_number, card_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS deck_snapshots (
+                deck_id   TEXT PRIMARY KEY,
+                deck_name TEXT NOT NULL,
+                cards     TEXT NOT NULL
             );
             ",
         )
@@ -168,6 +175,39 @@ impl Db {
             params![deck_id, deck_name, match_id],
         )?;
         Ok(())
+    }
+
+    // --- deck snapshots ---
+
+    pub fn upsert_deck_snapshot(
+        &self,
+        deck_id: &str,
+        deck_name: &str,
+        cards: &HashMap<u32, u32>,
+    ) -> Result<()> {
+        let cards_json = serde_json::to_string(cards).unwrap_or_else(|_| "{}".to_string());
+        self.conn.execute(
+            "INSERT INTO deck_snapshots (deck_id, deck_name, cards) VALUES (?1, ?2, ?3)
+             ON CONFLICT(deck_id) DO UPDATE SET
+               deck_name = excluded.deck_name,
+               cards = excluded.cards",
+            params![deck_id, deck_name, cards_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_deck_snapshots(&self) -> Result<HashMap<String, (String, HashMap<u32, u32>)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT deck_id, deck_name, cards FROM deck_snapshots")?;
+        let rows = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let cards_json: String = row.get(2)?;
+            let cards: HashMap<u32, u32> = serde_json::from_str(&cards_json).unwrap_or_default();
+            Ok((id, (name, cards)))
+        })?;
+        rows.collect()
     }
 
     pub fn set_die_roll(&self, match_id: &str, won: bool) -> Result<()> {

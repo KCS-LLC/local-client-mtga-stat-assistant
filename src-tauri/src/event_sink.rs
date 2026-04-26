@@ -26,7 +26,11 @@ pub struct EventSink {
 }
 
 impl EventSink {
-    pub fn new() -> Self {
+    pub fn new(db: &Db) -> Self {
+        // Snapshots persist across sessions in the deck_snapshots table so
+        // correlation works even when the assistant starts mid-MTGA-session
+        // and misses MTGA's CourseData chunk.
+        let snapshots = db.get_deck_snapshots().unwrap_or_default();
         Self {
             current_match_id: None,
             player_seat_id: 0,
@@ -34,7 +38,7 @@ impl EventSink {
             opponent_seat_id: 0,
             current_game_number: 1,
             die_rolls: HashMap::new(),
-            deck_snapshots: HashMap::new(),
+            deck_snapshots: snapshots,
             last_loaded_deck: None,
             last_loaded_commander: None,
             deck_identified: false,
@@ -199,6 +203,7 @@ impl EventSink {
             } => {
                 let qty: HashMap<u32, u32> =
                     cards.iter().map(|c| (c.card_id, c.quantity)).collect();
+                let _ = db.upsert_deck_snapshot(deck_id, deck_name, &qty);
                 self.deck_snapshots
                     .insert(deck_id.clone(), (deck_name.clone(), qty));
             }
