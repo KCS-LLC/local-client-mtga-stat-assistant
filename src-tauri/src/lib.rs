@@ -141,6 +141,33 @@ fn get_card_info(
         .unwrap_or_default()
 }
 
+/// Export full match history as a pretty-printed JSON file on the user's Desktop.
+/// Returns the absolute path of the created file on success.
+#[tauri::command]
+fn export_match_history(hub: State<Arc<Mutex<DbHub>>>) -> Result<String, String> {
+    let records = {
+        let hub = hub.lock().map_err(|e| e.to_string())?;
+        match hub.db() {
+            Some(db) => db.get_match_history(u32::MAX).map_err(|e| e.to_string())?,
+            None => vec![],
+        }
+    };
+    let json = serde_json::to_string_pretty(&records).map_err(|e| e.to_string())?;
+
+    let desktop = std::env::var("USERPROFILE")
+        .map(|p| std::path::PathBuf::from(p).join("Desktop"))
+        .unwrap_or_else(|_| default_app_root());
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let path = desktop.join(format!("mtga-match-history-{}.json", ts));
+
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Snapshot Player.log and debug.log into the parent folder for inspection.
 /// Hardcoded destination is the working directory I (Claude) can read while
 /// developing — saves the user from manually copying files between sessions.
@@ -304,7 +331,8 @@ pub fn run() {
             get_settings,
             set_app_setting,
             copy_logs_for_review,
-            reset_stats
+            reset_stats,
+            export_match_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -76,6 +76,7 @@ export type GameEvent =
     }
   | { type: "CommanderReturned"; card_id: number; seat_id: number }
   | { type: "LibraryShuffle"; seat_id: number }
+  | { type: "PlayedFirst"; seat_id: number }
   | {
       type: "ZoneStateSync";
       seat_id: number;

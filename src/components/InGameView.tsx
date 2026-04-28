@@ -1,3 +1,4 @@
+import { useReducer } from "react";
 import type { MatchState } from "../hooks/useMatchState";
 import { useCardInfo, type CardInfo } from "../hooks/useCardNames";
 
@@ -5,17 +6,80 @@ interface Props {
   state: MatchState;
 }
 
+/** Bo3 mid-match summary. Visible during the sideboard window between
+ * games of a Bo3 (GameEnded fired with sideboard_next=true and the next
+ * game's state hasn't arrived yet). The reducer auto-dismisses when the
+ * new game's first ZoneStateSync lands; the × on this banner lets the
+ * user dismiss earlier if they prefer. */
+function IntermissionBanner({ state }: { state: MatchState }) {
+  // Local "manually dismissed" flag — survives until next state change of
+  // the underlying intermissionActive flag. Resets implicitly when the
+  // banner's parent decides not to render it (intermissionActive=false).
+  const [dismissed, dismiss] = useReducer(() => true, false);
+  if (!state.intermissionActive || dismissed) return null;
+
+  // Derive player's team from any game result (we always log the
+  // perspective via player_team_id on the backend, but it's not exposed
+  // on MatchState). Cheaper: look at most recent game vs. opponent seat.
+  // We treat a game as "you won" iff the winning team is NOT the opponent's
+  // (which works because games are 1v1 in MTGA's modes that go to 3 games).
+  const games = state.gameResults;
+  const wins = games.filter(
+    (g) => g.winning_team_id !== state.opponentSeatId,
+  ).length;
+  const losses = games.length - wins;
+
+  return (
+    <div className="border-b border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950 px-4 py-3 flex items-start gap-3">
+      <div className="flex-1">
+        <div className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+          Sideboarding for game {state.gameNumber} · You {wins}–{losses}{" "}
+          {state.opponent?.name ?? "Opponent"}
+        </div>
+        <ul className="mt-1 text-xs text-amber-800 dark:text-amber-400 space-y-0.5">
+          {games.map((g) => {
+            const youWon = g.winning_team_id !== state.opponentSeatId;
+            return (
+              <li key={g.game_number}>
+                Game {g.game_number}: {youWon ? "You won" : "You lost"}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <button
+        type="button"
+        onClick={dismiss}
+        title="Dismiss"
+        className="text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200 px-1 leading-none text-lg"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 function cardLabel(id: number, info: Map<number, CardInfo>): string {
   return info.get(id)?.name ?? `Card #${id}`;
 }
 
-/** Sort entries [grpId, count] alphabetically by resolved card name. */
-function sortByName(
+/** Sort entries [grpId, count] by CMC ascending, lands at bottom; alphabetical within same CMC. */
+function sortByCmcLandsBottom(
   entries: Array<[number, number]>,
   info: Map<number, CardInfo>,
 ): Array<[number, number]> {
   return entries.slice().sort((a, b) => {
-    const an = info.get(a[0])?.name ?? `Card #${a[0]}`;
+    const ai = info.get(a[0]);
+    const bi = info.get(b[0]);
+    const aLand = ai?.is_land ? 1 : 0;
+    const bLand = bi?.is_land ? 1 : 0;
+    if (aLand !== bLand) return aLand - bLand;
+    if (!aLand) {
+      const aCmc = ai?.cmc ?? 999;
+      const bCmc = bi?.cmc ?? 999;
+      if (aCmc !== bCmc) return aCmc - bCmc;
+    }
+    const an = ai?.name ?? `Card #${a[0]}`;
     const bn = info.get(b[0])?.name ?? `Card #${b[0]}`;
     return an.localeCompare(bn);
   });
@@ -57,7 +121,7 @@ function CardCountList({
   if (entries.length === 0) return null;
   return (
     <ul className="space-y-1 mt-3 max-h-96 overflow-auto">
-      {sortByName(entries, info).map(([id, count]) => (
+      {sortByCmcLandsBottom(entries, info).map(([id, count]) => (
         <li
           key={id}
           className="flex justify-between text-zinc-700 dark:text-zinc-300"
@@ -89,7 +153,7 @@ function LibraryWithOdds({
 }) {
   if (entries.length === 0) return null;
   // Sort: still-in-library first (by name), then exhausted entries last
-  const sorted = sortByName(entries, info).filter(([, c]) => c > 0);
+  const sorted = sortByCmcLandsBottom(entries, info).filter(([, c]) => c > 0);
   return (
     <ul className="space-y-1 mt-1 text-xs">
       {sorted.map(([id, count]) => {
@@ -201,7 +265,9 @@ export function InGameView({ state }: Props) {
       : null;
 
   return (
-    <div className="grid grid-cols-3 gap-4 p-4 h-full">
+    <div className="flex flex-col h-full">
+      <IntermissionBanner state={state} />
+      <div className="grid grid-cols-3 gap-4 p-4 flex-1 min-h-0">
       {/* Column 1: your decklist with live library + draw odds */}
       <section className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 overflow-auto bg-white dark:bg-zinc-950">
         <div className="flex items-baseline justify-between mb-3">
@@ -285,6 +351,7 @@ export function InGameView({ state }: Props) {
           <CardCountList entries={opponent.entries} info={info} />
         </div>
       </section>
+      </div>
     </div>
   );
 }

@@ -11,6 +11,8 @@ pub struct CardDatabase {
     names: HashMap<u32, String>,
     tokens: HashSet<u32>,
     lands: HashSet<u32>,
+    /// Converted mana cost (mana value) per card. Missing = 0.
+    cmc: HashMap<u32, u32>,
     /// Path of the .mtga file we loaded; used by the watcher to detect updates.
     /// None when no database was found (e.g. MTGA not yet installed).
     loaded_path: Option<PathBuf>,
@@ -21,6 +23,8 @@ pub struct CardInfo {
     pub name: String,
     pub is_token: bool,
     pub is_land: bool,
+    /// Converted mana cost / mana value. 0 when unknown or a land.
+    pub cmc: u32,
 }
 
 impl CardDatabase {
@@ -28,10 +32,11 @@ impl CardDatabase {
         match Self::try_load() {
             Ok(db) => {
                 dlog!(
-                    "[cards] loaded {} names ({} tokens, {} lands) from {:?}",
+                    "[cards] loaded {} names ({} tokens, {} lands, {} cmc) from {:?}",
                     db.names.len(),
                     db.tokens.len(),
                     db.lands.len(),
+                    db.cmc.len(),
                     db.loaded_path
                 );
                 db
@@ -54,13 +59,36 @@ impl CardDatabase {
         )
         .map_err(|e| format!("open: {}", e))?;
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT c.GrpId, c.IsToken, c.Types, l.Loc
+        // Detect which column holds mana value — "CMC" in older DB builds,
+        // potentially "ManaValue" in newer ones. Fall back to 0 if neither exists.
+        let cmc_col: Option<String> = ["CMC", "ManaValue"].iter().find_map(|&col| {
+            conn.query_row(
+                "SELECT 1 FROM pragma_table_info('Cards') WHERE name = ?1",
+                rusqlite::params![col],
+                |_| Ok(()),
+            )
+            .ok()
+            .map(|_| col.to_string())
+        });
+
+        let sql = if let Some(ref col) = cmc_col {
+            format!(
+                "SELECT c.GrpId, c.IsToken, c.Types, l.Loc, COALESCE(c.{}, 0)
                  FROM Cards c
                  JOIN Localizations_enUS l ON l.LocId = c.TitleId
                  WHERE l.Formatted = 1",
+                col
             )
+        } else {
+            "SELECT c.GrpId, c.IsToken, c.Types, l.Loc, 0
+             FROM Cards c
+             JOIN Localizations_enUS l ON l.LocId = c.TitleId
+             WHERE l.Formatted = 1"
+                .to_string()
+        };
+
+        let mut stmt = conn
+            .prepare(&sql)
             .map_err(|e| format!("prepare: {}", e))?;
 
         let rows = stmt
@@ -70,6 +98,7 @@ impl CardDatabase {
                     row.get::<_, bool>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, f64>(4)? as u32,
                 ))
             })
             .map_err(|e| format!("query: {}", e))?;
@@ -77,8 +106,9 @@ impl CardDatabase {
         let mut names = HashMap::new();
         let mut tokens = HashSet::new();
         let mut lands = HashSet::new();
+        let mut cmc_map = HashMap::new();
         for row in rows.flatten() {
-            let (grp, is_token, types, name) = row;
+            let (grp, is_token, types, name, cmc) = row;
             // MTGA's Loc field contains HTML markup like <nobr>...</nobr> (used
             // to keep multi-word names from breaking across lines in their UI).
             // Render-time stripping in the frontend would also leak through to
@@ -94,12 +124,18 @@ impl CardDatabase {
             if types.split(',').any(|t| t.trim() == "5") {
                 lands.insert(grp);
             }
+            if cmc > 0 {
+                cmc_map.insert(grp, cmc);
+            }
         }
+
+        dlog!("[cards] cmc_col={:?}, {} cmc values loaded", cmc_col, cmc_map.len());
 
         Ok(Self {
             names,
             tokens,
             lands,
+            cmc: cmc_map,
             loaded_path: Some(path),
         })
     }
@@ -115,6 +151,7 @@ impl CardDatabase {
                             name: name.clone(),
                             is_token: self.tokens.contains(id),
                             is_land: self.lands.contains(id),
+                            cmc: self.cmc.get(id).copied().unwrap_or(0),
                         },
                     )
                 })

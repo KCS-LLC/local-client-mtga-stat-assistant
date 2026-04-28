@@ -5,6 +5,7 @@ export interface CardInfo {
   name: string;
   is_token: boolean;
   is_land: boolean;
+  cmc: number;
 }
 
 // Module-level cache shared across components — once we've looked a card up,

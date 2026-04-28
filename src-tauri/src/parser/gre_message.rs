@@ -29,6 +29,8 @@ pub struct GreParser {
     commander_casts: HashMap<u32, u8>,
     // (seat_id, grpId) pairs for commanders we've already announced
     known_commanders: HashSet<(u8, u32)>,
+    // Set once per match when we detect turn 1 of game 1 from turnInfo
+    played_first_emitted: bool,
 }
 
 impl GreParser {
@@ -42,6 +44,7 @@ impl GreParser {
             game_number: 1,
             commander_casts: HashMap::new(),
             known_commanders: HashSet::new(),
+            played_first_emitted: false,
         }
     }
 
@@ -54,6 +57,7 @@ impl GreParser {
         self.game_number = 1;
         self.commander_casts.clear();
         self.known_commanders.clear();
+        self.played_first_emitted = false;
     }
 
     pub fn parse(&mut self, content: &str) -> Vec<GameEvent> {
@@ -140,23 +144,51 @@ impl GreParser {
 
         let update_type = gs.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-        if update_type == "GameStateType_Full" {
+        let mut events = if update_type == "GameStateType_Full" {
             self.rebuild_maps(gs);
-            let mut events = self.detect_new_commanders(gs);
-            events.extend(self.emit_zone_state_syncs());
-            return events;
+            let mut ev = self.detect_new_commanders(gs);
+            ev.extend(self.emit_zone_state_syncs());
+            ev
+        } else {
+            self.update_maps(gs);
+            let mut ev = self.detect_new_commanders(gs);
+            ev.extend(self.process_zone_transfers(gs));
+            // ZoneStateSync also fires on Diffs because MTGA only sends ONE Full
+            // per game, before the opening hand is dealt. Subsequent Diffs add
+            // hand cards via gameObjects + zone.objectInstanceIds updates without
+            // a corresponding ZoneTransfer annotation, so the per-card decrement
+            // path never fires for the opening 7. Recomputing on every state
+            // update covers it. The emit is cheap and idempotent on the frontend.
+            ev.extend(self.emit_zone_state_syncs());
+            ev
+        };
+
+        // Detect who plays first from turnInfo when game 1 turn 1 begins.
+        // The die roll tells us who *won* the flip, but the winner can choose
+        // to go second — reading the actual turn order from the GRE is the
+        // only reliable source. Emit once per match; game_number=1 guards
+        // against Bo3 game-2+ turns also having turnNumber=1.
+        if !self.played_first_emitted && self.game_number == 1 {
+            if let Some(turn_info) = gs.get("turnInfo") {
+                let turn_num = turn_info
+                    .get("turnNumber")
+                    .and_then(|t| t.as_u64())
+                    .unwrap_or(0);
+                if turn_num == 1 {
+                    if let Some(active) = turn_info
+                        .get("activePlayer")
+                        .and_then(|a| a.as_u64())
+                        .filter(|&a| a != 0)
+                    {
+                        self.played_first_emitted = true;
+                        events.push(GameEvent::PlayedFirst {
+                            seat_id: active as u8,
+                        });
+                    }
+                }
+            }
         }
 
-        self.update_maps(gs);
-        let mut events = self.detect_new_commanders(gs);
-        events.extend(self.process_zone_transfers(gs));
-        // ZoneStateSync also fires on Diffs because MTGA only sends ONE Full
-        // per game, before the opening hand is dealt. Subsequent Diffs add
-        // hand cards via gameObjects + zone.objectInstanceIds updates without
-        // a corresponding ZoneTransfer annotation, so the per-card decrement
-        // path never fires for the opening 7. Recomputing on every state
-        // update covers it. The emit is cheap and idempotent on the frontend.
-        events.extend(self.emit_zone_state_syncs());
         events
     }
 

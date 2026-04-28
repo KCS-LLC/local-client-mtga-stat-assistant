@@ -32,6 +32,11 @@ export interface MatchState {
   // grpId of the top card of player's library when known (after scry,
   // surveil, top-deck tutor, etc.). null when the top is uniformly random.
   playerKnownTop: number | null;
+  // Bo3: per-game results so far this match (newest last)
+  gameResults: Array<{ game_number: number; winning_team_id: number }>;
+  // True between games of a Bo3 (sideboard window): GameEnded fired with
+  // sideboard_next=true and the next game's state hasn't arrived yet.
+  intermissionActive: boolean;
   // Diagnostic
   eventCount: number;
   lastEventType: string | null;
@@ -59,6 +64,8 @@ function initial(): MatchState {
     playerLibrary: null,
     playerLibrarySize: 0,
     playerKnownTop: null,
+    gameResults: [],
+    intermissionActive: false,
     eventCount: 0,
     lastEventType: null,
   };
@@ -96,6 +103,8 @@ function reducer(state: MatchState, action: Action): MatchState {
         opponentInstances: new Map(),
         playerInstances: new Map(),
         commanderTax: new Map(),
+        gameResults: [],
+        intermissionActive: false,
       };
 
     case "PlayerIdentified":
@@ -107,10 +116,24 @@ function reducer(state: MatchState, action: Action): MatchState {
       };
 
     case "MatchEnded":
-      return { ...state, inMatch: false };
+      return { ...state, inMatch: false, intermissionActive: false };
 
     case "GameEnded":
-      return { ...state, gameNumber: e.game_number + 1 };
+      return {
+        ...state,
+        gameNumber: e.game_number + 1,
+        gameResults: [
+          ...state.gameResults,
+          {
+            game_number: e.game_number,
+            winning_team_id: e.winning_team_id,
+          },
+        ],
+        // Open the sideboard-window summary only when more games follow.
+        // Bo1 (Brawl, Standard ranked) and the final game of Bo3 set
+        // sideboard_next=false, so no banner appears.
+        intermissionActive: e.sideboard_next,
+      };
 
     case "ZoneChanged": {
       let next = state;
@@ -198,8 +221,15 @@ function reducer(state: MatchState, action: Action): MatchState {
       // seat. Idempotent: re-receiving the same snapshot produces the same
       // library, so this is safe to handle on every Full event (e.g. after
       // a reconnect mid-game).
+
+      // First state from the new game also dismisses the Bo3 intermission
+      // summary banner (the sideboard window is over).
+      const dismissIntermission = state.intermissionActive;
+
       if (e.seat_id !== state.playerSeatId || state.playerDeck === null) {
-        return state;
+        return dismissIntermission
+          ? { ...state, intermissionActive: false }
+          : state;
       }
       const lib = new Map<number, number>(state.playerDeck);
       // Pull the commander out of the library baseline
@@ -227,6 +257,7 @@ function reducer(state: MatchState, action: Action): MatchState {
         playerLibrary: lib,
         playerLibrarySize: size,
         playerKnownTop: e.top_of_library ?? null,
+        intermissionActive: dismissIntermission ? false : state.intermissionActive,
       };
     }
 

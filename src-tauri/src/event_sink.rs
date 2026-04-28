@@ -314,6 +314,14 @@ impl EventSink {
                 }
             }
 
+            GameEvent::PlayedFirst { seat_id } => {
+                if let Some(mid) = &self.current_match_id.clone() {
+                    let went_first = *seat_id == self.player_seat_id;
+                    let _ = db.set_played_first(mid, went_first);
+                    dlog!("[event_sink] played_first: seat {} went first, player_seat={}, went_first={}", seat_id, self.player_seat_id, went_first);
+                }
+            }
+
             // Not persisted at this layer: CommanderCast, CommanderReturned,
             // CommanderRevealed, LibraryShuffle (frontend-only). Also no
             // LocalPlayerIdentified — that's handled above before db lookup.

@@ -13,11 +13,11 @@ function cardLabel(id: number, info: Map<number, CardInfo>): string {
 }
 
 /**
- * Sort entries [grpId, qty] alphabetically by name with lands grouped at
- * the bottom. Cards with unresolved info (still loading) sort to the very
- * end so they don't visually scramble the top of the list while it loads.
+ * Sort entries [grpId, qty] by CMC ascending, lands at the bottom
+ * (alphabetical within lands), unresolved cards sort last within each group.
+ * Matches MTGA's native deck view order.
  */
-function sortAlphaLandsBottom(
+function sortByCmcLandsBottom(
   entries: Array<[number, number]>,
   info: Map<number, CardInfo>,
 ): Array<[number, number]> {
@@ -27,6 +27,12 @@ function sortAlphaLandsBottom(
     const aLand = ai?.is_land ? 1 : 0;
     const bLand = bi?.is_land ? 1 : 0;
     if (aLand !== bLand) return aLand - bLand;
+    // Within non-lands: CMC ascending; within lands: alphabetical only
+    if (!aLand) {
+      const aCmc = ai?.cmc ?? 999;
+      const bCmc = bi?.cmc ?? 999;
+      if (aCmc !== bCmc) return aCmc - bCmc;
+    }
     const an = ai?.name ?? `~~~${a[0]}`;
     const bn = bi?.name ?? `~~~${b[0]}`;
     return an.localeCompare(bn);
@@ -74,7 +80,7 @@ export function DeckExplorer({ initialDeckId }: Props) {
   const entries: Array<[number, number]> = selected
     ? Object.entries(selected.cards).map(([k, v]) => [Number(k), v])
     : [];
-  const sorted = sortAlphaLandsBottom(entries, info);
+  const sorted = sortByCmcLandsBottom(entries, info);
   const totalCards = entries.reduce((sum, [, q]) => sum + q, 0);
 
   if (loaded && decks.length === 0) {

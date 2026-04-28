@@ -122,6 +122,12 @@ pub enum GameEvent {
     LibraryShuffle {
         seat_id: u8,
     },
+    /// Turn 1 of game 1 has begun; seat_id is who plays first this match.
+    /// Emitted once per match from the GRE turnInfo signal, which is more
+    /// accurate than inferring from the die roll (winner can choose to go second).
+    PlayedFirst {
+        seat_id: u8,
+    },
     /// Snapshot of which cards (grpIds) are currently in non-library zones for
     /// a seat, emitted after each Full GameStateMessage. Lets the frontend
     /// recompute library state without needing to have caught every individual
