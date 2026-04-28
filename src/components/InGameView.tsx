@@ -72,35 +72,51 @@ function CardCountList({
   );
 }
 
-/** Decklist with live library counts + next-draw probability per card. */
+/** Decklist with live library counts + per-card "is on top of library"
+ * probability. When MTGA has revealed the top to us (scry/surveil/tutor),
+ * the matching card shows 100% and every other card shows 0%. Otherwise
+ * the chance is the uniform `count / library_size`. */
 function LibraryWithOdds({
   entries,
   info,
   librarySize,
+  knownTop,
 }: {
   entries: Array<[number, number]>;
   info: Map<number, CardInfo>;
   librarySize: number;
+  knownTop: number | null;
 }) {
   if (entries.length === 0) return null;
   // Sort: still-in-library first (by name), then exhausted entries last
   const sorted = sortByName(entries, info).filter(([, c]) => c > 0);
   return (
-    <ul className="space-y-1 mt-1 max-h-96 overflow-auto text-xs">
+    <ul className="space-y-1 mt-1 text-xs">
       {sorted.map(([id, count]) => {
-        const pct = librarySize > 0 ? (count / librarySize) * 100 : 0;
+        let pct: number;
+        if (knownTop !== null) {
+          pct = id === knownTop ? 100 : 0;
+        } else {
+          pct = librarySize > 0 ? (count / librarySize) * 100 : 0;
+        }
         const isLand = info.get(id)?.is_land === true;
+        const isTop = knownTop === id;
         return (
           <li
             key={id}
-            className="flex justify-between gap-2 text-zinc-700 dark:text-zinc-300"
+            className={`flex justify-between gap-2 ${
+              isTop
+                ? "text-amber-700 dark:text-amber-400 font-medium"
+                : "text-zinc-700 dark:text-zinc-300"
+            }`}
           >
-            <span className={isLand ? "text-emerald-700 dark:text-emerald-400" : ""}>
+            <span className={isLand && !isTop ? "text-emerald-700 dark:text-emerald-400" : ""}>
+              {isTop && "↑ "}
               {cardLabel(id, info)}
             </span>
             <span className="text-zinc-500 tabular-nums whitespace-nowrap">
               {count > 1 ? `${count}×  ` : ""}
-              {pct.toFixed(1)}%
+              {pct.toFixed(2)}%
             </span>
           </li>
         );
@@ -166,11 +182,57 @@ export function InGameView({ state }: Props) {
     (sum, [id, q]) => sum + (info.get(id)?.is_land ? q : 0),
     0,
   );
+  // When the top is known, P(land on top) collapses to 100% or 0% based on
+  // whether that specific card is a land.
+  const knownTopIsLand =
+    state.playerKnownTop !== null &&
+    info.get(state.playerKnownTop)?.is_land === true;
   const landNextDrawPct =
-    librarySize > 0 ? (landsInLibrary / librarySize) * 100 : 0;
+    state.playerKnownTop !== null
+      ? knownTopIsLand
+        ? 100
+        : 0
+      : librarySize > 0
+        ? (landsInLibrary / librarySize) * 100
+        : 0;
+  const knownTopName =
+    state.playerKnownTop !== null
+      ? (info.get(state.playerKnownTop)?.name ?? `Card #${state.playerKnownTop}`)
+      : null;
 
   return (
-    <div className="grid grid-cols-2 gap-4 p-4 h-full">
+    <div className="grid grid-cols-3 gap-4 p-4 h-full">
+      {/* Column 1: your decklist with live library + draw odds */}
+      <section className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 overflow-auto bg-white dark:bg-zinc-950">
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-base font-semibold">Your library</h2>
+          <span className="text-xs text-zinc-500 tabular-nums">
+            {librarySize} cards
+          </span>
+        </div>
+        {knownTopName !== null && (
+          <div className="mb-2 text-xs flex justify-between text-amber-700 dark:text-amber-400">
+            <span>Next draw is known:</span>
+            <span className="font-medium">↑ {knownTopName}</span>
+          </div>
+        )}
+        <div className="flex justify-between mb-3 text-xs text-zinc-500">
+          <span>Next draw: land</span>
+          <span>
+            {state.playerKnownTop !== null
+              ? `${landNextDrawPct.toFixed(0)}%`
+              : `${landsInLibrary} / ${librarySize} (${landNextDrawPct.toFixed(2)}%)`}
+          </span>
+        </div>
+        <LibraryWithOdds
+          entries={libraryEntries}
+          info={info}
+          librarySize={librarySize}
+          knownTop={state.playerKnownTop}
+        />
+      </section>
+
+      {/* Column 2: your this-game state — format, game #, commander, cards played */}
       <section className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 overflow-auto bg-white dark:bg-zinc-950">
         <h2 className="text-base font-semibold mb-3">You</h2>
         <dl className="space-y-2 text-sm">
@@ -199,26 +261,9 @@ export function InGameView({ state }: Props) {
           )}
           <CardCountList entries={player.entries} info={info} />
         </div>
-
-        <div className="mt-6 text-sm">
-          <div className="flex justify-between mb-1">
-            <span className="text-zinc-500">Library</span>
-            <span>{librarySize} cards</span>
-          </div>
-          <div className="flex justify-between mb-3 text-xs text-zinc-500">
-            <span>Next draw: land</span>
-            <span>
-              {landsInLibrary} / {librarySize} ({landNextDrawPct.toFixed(1)}%)
-            </span>
-          </div>
-          <LibraryWithOdds
-            entries={libraryEntries}
-            info={info}
-            librarySize={librarySize}
-          />
-        </div>
       </section>
 
+      {/* Column 3: opponent */}
       <section className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 overflow-auto bg-white dark:bg-zinc-950">
         <h2 className="text-base font-semibold mb-3">
           {state.opponent?.name ?? "Opponent"}

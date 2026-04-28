@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { StatusBar } from "./components/StatusBar";
 import { OutOfGameView } from "./components/OutOfGameView";
 import { InGameView } from "./components/InGameView";
+import { DeckExplorer } from "./components/DeckExplorer";
+import { SettingsView } from "./components/SettingsView";
 import { useMatchState } from "./hooks/useMatchState";
+
+type OutOfGameTab = "stats" | "decks" | "settings";
 
 function useTheme() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -24,6 +28,57 @@ function useTheme() {
   };
 }
 
+function OutOfGameShell() {
+  const [tab, setTab] = useState<OutOfGameTab>("stats");
+  const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
+
+  function openDeck(deckId: string) {
+    setSelectedDeckId(deckId);
+    setTab("decks");
+  }
+
+  return (
+    <div>
+      <nav className="border-b border-zinc-200 dark:border-zinc-800 px-6 flex gap-1">
+        <TabButton label="Stats" active={tab === "stats"} onClick={() => setTab("stats")} />
+        <TabButton label="Decks" active={tab === "decks"} onClick={() => setTab("decks")} />
+        <TabButton
+          label="Settings"
+          active={tab === "settings"}
+          onClick={() => setTab("settings")}
+        />
+      </nav>
+      {tab === "stats" && <OutOfGameView onOpenDeck={openDeck} />}
+      {tab === "decks" && <DeckExplorer initialDeckId={selectedDeckId} />}
+      {tab === "settings" && <SettingsView />}
+    </div>
+  );
+}
+
+function TabButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+        active
+          ? "border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400"
+          : "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
 function App() {
   const state = useMatchState();
   const { theme, toggle } = useTheme();
@@ -39,7 +94,7 @@ function App() {
         onToggleTheme={toggle}
       />
       <main className="flex-1 overflow-auto">
-        {state.inMatch ? <InGameView state={state} /> : <OutOfGameView />}
+        {state.inMatch ? <InGameView state={state} /> : <OutOfGameShell />}
       </main>
     </div>
   );

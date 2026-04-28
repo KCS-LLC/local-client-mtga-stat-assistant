@@ -75,4 +75,18 @@ export type GameEvent =
       tax: number;
     }
   | { type: "CommanderReturned"; card_id: number; seat_id: number }
-  | { type: "LibraryShuffle"; seat_id: number };
+  | { type: "LibraryShuffle"; seat_id: number }
+  | {
+      type: "ZoneStateSync";
+      seat_id: number;
+      hand: number[];
+      battlefield: number[];
+      graveyard: number[];
+      exile: number[];
+      stack: number[];
+      top_of_library: number | null;
+    }
+  | {
+      type: "LocalPlayerIdentified";
+      user_id: string;
+    };

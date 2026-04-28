@@ -23,9 +23,15 @@ export interface MatchState {
   commanderTax: Map<number, Map<number, number>>;
   // Player's own deck for this match: grp_id → quantity (includes commander)
   playerDeck: Map<number, number> | null;
+  // Commander grpId for our deck (excluded from library because it lives in
+  // the command zone, not the library)
+  playerCommander: number | null;
   // Player's library state (decremented as cards leave Library)
   playerLibrary: Map<number, number> | null;
   playerLibrarySize: number;
+  // grpId of the top card of player's library when known (after scry,
+  // surveil, top-deck tutor, etc.). null when the top is uniformly random.
+  playerKnownTop: number | null;
   // Diagnostic
   eventCount: number;
   lastEventType: string | null;
@@ -49,8 +55,10 @@ function initial(): MatchState {
     playerInstances: new Map(),
     commanderTax: new Map(),
     playerDeck: null,
+    playerCommander: null,
     playerLibrary: null,
     playerLibrarySize: 0,
+    playerKnownTop: null,
     eventCount: 0,
     lastEventType: null,
   };
@@ -176,8 +184,49 @@ function reducer(state: MatchState, action: Action): MatchState {
       return {
         ...state,
         playerDeck: deck,
+        playerCommander: e.commander,
         playerLibrary: library,
         playerLibrarySize: librarySize,
+      };
+    }
+
+    case "ZoneStateSync": {
+      // Initial-state snapshot from a Full GameStateMessage. Cards in the
+      // opening hand never trigger a Library→Hand transition annotation, so
+      // without this we'd never decrement them from the library. Recompute
+      // library = deck − commander − every visible non-library card for our
+      // seat. Idempotent: re-receiving the same snapshot produces the same
+      // library, so this is safe to handle on every Full event (e.g. after
+      // a reconnect mid-game).
+      if (e.seat_id !== state.playerSeatId || state.playerDeck === null) {
+        return state;
+      }
+      const lib = new Map<number, number>(state.playerDeck);
+      // Pull the commander out of the library baseline
+      if (state.playerCommander !== null) {
+        const c = lib.get(state.playerCommander) ?? 0;
+        if (c > 1) lib.set(state.playerCommander, c - 1);
+        else lib.delete(state.playerCommander);
+      }
+      const seen = [
+        ...e.hand,
+        ...e.battlefield,
+        ...e.graveyard,
+        ...e.exile,
+        ...e.stack,
+      ];
+      for (const id of seen) {
+        const c = lib.get(id);
+        if (c === undefined) continue;
+        if (c > 1) lib.set(id, c - 1);
+        else lib.delete(id);
+      }
+      const size = Array.from(lib.values()).reduce((s, q) => s + q, 0);
+      return {
+        ...state,
+        playerLibrary: lib,
+        playerLibrarySize: size,
+        playerKnownTop: e.top_of_library ?? null,
       };
     }
 

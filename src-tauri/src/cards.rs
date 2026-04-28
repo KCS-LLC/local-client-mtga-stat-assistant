@@ -79,7 +79,12 @@ impl CardDatabase {
         let mut lands = HashSet::new();
         for row in rows.flatten() {
             let (grp, is_token, types, name) = row;
-            names.insert(grp, name);
+            // MTGA's Loc field contains HTML markup like <nobr>...</nobr> (used
+            // to keep multi-word names from breaking across lines in their UI).
+            // Render-time stripping in the frontend would also leak through to
+            // the Decks tab and any other place names appear, so clean once at
+            // load time.
+            names.insert(grp, strip_html_tags(&name));
             if is_token {
                 tokens.insert(grp);
             }
@@ -155,6 +160,22 @@ pub fn spawn_watcher(cards: SharedCards) {
             *guard = new_db;
         }
     });
+}
+
+/// Remove `<...>` HTML-style tags. MTGA stores names like
+/// `<nobr>Wind-Scarred</nobr> Crag` to control line-wrapping in their UI.
+fn strip_html_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0u32;
+    for ch in s.chars() {
+        match ch {
+            '<' => depth += 1,
+            '>' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn find_card_db_path() -> Result<PathBuf, String> {

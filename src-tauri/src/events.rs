@@ -81,7 +81,8 @@ pub enum GameEvent {
         owner_seat_id: u8,
         face_down: bool,
     },
-    /// Full deck snapshot from session startup (only emitted when track_deck_history is on)
+    /// Full deck snapshot parsed from MTGA's CourseData log block; persisted
+    /// to the deck_snapshots table for later correlation against in-match decks.
     DeckSnapshot {
         deck_id: String,
         deck_name: String,
@@ -120,5 +121,30 @@ pub enum GameEvent {
     /// A player's library was shuffled; instance IDs for that library are now stale
     LibraryShuffle {
         seat_id: u8,
+    },
+    /// Snapshot of which cards (grpIds) are currently in non-library zones for
+    /// a seat, emitted after each Full GameStateMessage. Lets the frontend
+    /// recompute library state without needing to have caught every individual
+    /// Library→Hand/Battlefield/etc transition (the opening hand bypasses
+    /// per-card ZoneTransfer annotations entirely).
+    ZoneStateSync {
+        seat_id: u8,
+        hand: Vec<u32>,
+        battlefield: Vec<u32>,
+        graveyard: Vec<u32>,
+        exile: Vec<u32>,
+        stack: Vec<u32>,
+        /// grpId of the top of this seat's library when its identity is
+        /// known to us (e.g. revealed by a scry/surveil/tutor effect). None
+        /// when the top is uniformly random — the normal case.
+        top_of_library: Option<u32>,
+    },
+    /// Local MTGA user identified from the log header pattern
+    /// `Match to <user_id>:` / `<user_id> to Match:`. Tells the event_sink
+    /// which per-user database to write to. Fires whenever a fresh user_id
+    /// is observed (login, account switch). Quiet for every subsequent header
+    /// line that names the same user.
+    LocalPlayerIdentified {
+        user_id: String,
     },
 }

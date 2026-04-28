@@ -1,5 +1,6 @@
 mod cards;
 mod db;
+mod db_hub;
 mod debug_log;
 mod event_sink;
 mod events;
@@ -10,13 +11,27 @@ mod segmenter;
 mod tailer;
 
 use cards::{CardDatabase, CardInfo, SharedCards};
-use db::{Db, DeckWL, MatchRecord};
+use db::{DeckSnapshotRecord, DeckWL, MatchRecord};
+use db_hub::DbHub;
 use event_sink::EventSink;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{atomic::AtomicBool, mpsc, Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 use tauri::{Emitter, Manager, State};
+
+#[derive(Debug, Serialize)]
+struct SettingsSnapshot {
+    /// Currently active user's MTGA user_id, or None if no user has been
+    /// detected from the log yet (e.g. MTGA not running).
+    player_id: Option<String>,
+    /// Display name for the current user, pulled from a recent match where
+    /// they appeared. None if no matches have been recorded yet.
+    player_name: Option<String>,
+    track_deck_history: bool,
+    backup_on_launch: bool,
+}
 
 #[tauri::command]
 fn launch_mtga(path: Option<String>) -> Result<(), String> {
@@ -29,27 +44,90 @@ fn get_mtga_status() -> bool {
 }
 
 #[tauri::command]
-fn get_wl_stats(db: State<Arc<Mutex<Db>>>) -> Result<Vec<DeckWL>, String> {
-    db.lock()
-        .map_err(|e| e.to_string())?
-        .get_wl_stats()
-        .map_err(|e| e.to_string())
+fn get_wl_stats(hub: State<Arc<Mutex<DbHub>>>) -> Result<Vec<DeckWL>, String> {
+    let hub = hub.lock().map_err(|e| e.to_string())?;
+    match hub.db() {
+        Some(db) => db.get_wl_stats().map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
 }
 
 #[tauri::command]
-fn get_match_history(db: State<Arc<Mutex<Db>>>) -> Result<Vec<MatchRecord>, String> {
-    db.lock()
-        .map_err(|e| e.to_string())?
-        .get_match_history(50)
-        .map_err(|e| e.to_string())
+fn get_match_history(hub: State<Arc<Mutex<DbHub>>>) -> Result<Vec<MatchRecord>, String> {
+    let hub = hub.lock().map_err(|e| e.to_string())?;
+    match hub.db() {
+        Some(db) => db.get_match_history(50).map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
 }
 
 #[tauri::command]
-fn reset_stats(db: State<Arc<Mutex<Db>>>) -> Result<(), String> {
-    db.lock()
-        .map_err(|e| e.to_string())?
-        .reset_stats()
-        .map_err(|e| e.to_string())
+fn get_decks(hub: State<Arc<Mutex<DbHub>>>) -> Result<Vec<DeckSnapshotRecord>, String> {
+    let hub = hub.lock().map_err(|e| e.to_string())?;
+    match hub.db() {
+        Some(db) => db.get_decks().map_err(|e| e.to_string()),
+        None => Ok(vec![]),
+    }
+}
+
+#[tauri::command]
+fn get_settings(hub: State<Arc<Mutex<DbHub>>>) -> Result<SettingsSnapshot, String> {
+    let hub = hub.lock().map_err(|e| e.to_string())?;
+    let user_id = hub.current_user_id().map(|s| s.to_string());
+
+    let (player_name, track_deck_history, backup_on_launch) = match hub.db() {
+        Some(db) => {
+            // Player name from the most recent match this user appears in
+            let recent = db.get_recent_players(20).unwrap_or_default();
+            let name = user_id
+                .as_ref()
+                .and_then(|uid| recent.iter().find(|(u, _)| u == uid).map(|(_, n)| n.clone()));
+            let track = db
+                .get_setting("track_deck_history")
+                .map(|v| v == "true")
+                .unwrap_or(true);
+            let backup = db
+                .get_setting("backup_on_launch")
+                .map(|v| v == "true")
+                .unwrap_or(true);
+            (name, track, backup)
+        }
+        None => (None, true, true),
+    };
+
+    Ok(SettingsSnapshot {
+        player_id: user_id,
+        player_name,
+        track_deck_history,
+        backup_on_launch,
+    })
+}
+
+#[tauri::command]
+fn set_app_setting(
+    hub: State<Arc<Mutex<DbHub>>>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    // Whitelist keys that are safe to set from the UI.
+    let allowed = ["track_deck_history", "backup_on_launch"];
+    if !allowed.contains(&key.as_str()) {
+        return Err(format!("setting '{}' is not user-configurable", key));
+    }
+    let hub = hub.lock().map_err(|e| e.to_string())?;
+    let db = hub
+        .db()
+        .ok_or_else(|| "no active user — wait for MTGA to log in".to_string())?;
+    db.set_setting(&key, &value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn reset_stats(hub: State<Arc<Mutex<DbHub>>>) -> Result<(), String> {
+    let hub = hub.lock().map_err(|e| e.to_string())?;
+    let db = hub
+        .db()
+        .ok_or_else(|| "no active user — wait for MTGA to log in".to_string())?;
+    db.reset_stats().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -99,14 +177,14 @@ fn default_log_path() -> std::path::PathBuf {
         .join("Player.log")
 }
 
-fn default_db_path() -> std::path::PathBuf {
+/// Root data directory for the app (`%APPDATA%/local-client-mtga-stat-assistant`).
+/// Per-user DBs live below this at `users/<user_id>/stats.db`.
+fn default_app_root() -> std::path::PathBuf {
     let app_data = std::env::var("APPDATA").unwrap_or_default();
-    std::path::Path::new(&app_data)
-        .join("local-client-mtga-stat-assistant")
-        .join("stats.db")
+    std::path::Path::new(&app_data).join("local-client-mtga-stat-assistant")
 }
 
-fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>, cards: SharedCards) {
+fn watch_log(app_handle: tauri::AppHandle, hub: Arc<Mutex<DbHub>>, cards: SharedCards) {
     thread::spawn(move || {
         let log_path = default_log_path();
         let mtga_was_running = mtga_process::is_running();
@@ -151,17 +229,14 @@ fn watch_log(app_handle: tauri::AppHandle, db: Arc<Mutex<Db>>, cards: SharedCard
         segmenter::start(line_rx, chunk_tx);
         router::start(chunk_rx, event_tx);
 
-        let mut sink = {
-            let guard = db.lock().expect("db lock for sink init");
-            EventSink::new(&guard)
-        };
+        let mut sink = EventSink::new();
 
         for event in event_rx {
             dlog!("[event] {:?}", event);
             // Write to DB and collect any synthesized follow-up events
             let synthesized: Vec<events::GameEvent> = {
-                if let (Ok(mut db), Ok(card_db)) = (db.lock(), cards.read()) {
-                    sink.process(&event, &mut db, &card_db)
+                if let (Ok(mut hub), Ok(card_db)) = (hub.lock(), cards.read()) {
+                    sink.process(&event, &mut hub, &card_db)
                 } else {
                     vec![]
                 }
@@ -187,24 +262,36 @@ fn default_debug_log_path() -> std::path::PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     debug_log::init(default_debug_log_path());
-    dlog!("[startup] app starting BUILD-2026-04-26-g (MatchStarted no longer wipes DeckLoaded library)");
+    dlog!("[startup] app starting BUILD-2026-04-27 (per-user DB hot-swap)");
 
-    let db_path = default_db_path();
-    dlog!("[startup] db path: {:?}", db_path);
-    let db = Db::open(&db_path).expect("failed to open database");
-    let db = Arc::new(Mutex::new(db));
+    let app_root = default_app_root();
+    dlog!("[startup] app root: {:?}", app_root);
+
+    // Open the most-recently-used per-user DB at startup so the UI has
+    // something to show before MTGA logs in. The router will swap to the
+    // correct user as soon as a header line is observed.
+    let mut hub = DbHub::new(app_root.clone());
+    if let Some(uid) = db_hub::find_most_recent_user(&app_root) {
+        dlog!("[startup] preselecting most-recent user: {}", uid);
+        if let Err(e) = hub.switch(&uid) {
+            dlog!("[startup] preselect failed: {}", e);
+        }
+    } else {
+        dlog!("[startup] no per-user DBs yet — waiting for first MTGA login");
+    }
+    let hub = Arc::new(Mutex::new(hub));
 
     let card_db: SharedCards = Arc::new(RwLock::new(CardDatabase::load()));
     cards::spawn_watcher(card_db.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(db.clone())
+        .manage(hub.clone())
         .manage(card_db.clone())
         .setup(move |app| {
-            let db = app.state::<Arc<Mutex<Db>>>().inner().clone();
+            let hub = app.state::<Arc<Mutex<DbHub>>>().inner().clone();
             let cards = app.state::<SharedCards>().inner().clone();
-            watch_log(app.handle().clone(), db, cards);
+            watch_log(app.handle().clone(), hub, cards);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -212,7 +299,10 @@ pub fn run() {
             get_mtga_status,
             get_wl_stats,
             get_match_history,
+            get_decks,
             get_card_info,
+            get_settings,
+            set_app_setting,
             copy_logs_for_review,
             reset_stats
         ])

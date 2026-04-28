@@ -11,6 +11,11 @@ struct ZoneInfo {
 pub struct GreParser {
     // Maps zoneId → zone metadata; rebuilt on each Full snapshot
     zone_map: HashMap<u32, ZoneInfo>,
+    // Maps zoneId → instance_ids currently in that zone. MTGA sends each
+    // zone's `objectInstanceIds` as the authoritative list whenever the zone
+    // is mentioned in an update, so we replace this entry on every mention.
+    // Used to compute ZoneStateSync (which cards are where for each seat).
+    zone_contents: HashMap<u32, Vec<u32>>,
     // Maps instanceId → grpId; updated incrementally
     instance_map: HashMap<u32, u32>,
     // Maps instanceId → current visibility
@@ -30,6 +35,7 @@ impl GreParser {
     pub fn new() -> Self {
         Self {
             zone_map: HashMap::new(),
+            zone_contents: HashMap::new(),
             instance_map: HashMap::new(),
             visibility_map: HashMap::new(),
             owner_map: HashMap::new(),
@@ -41,6 +47,7 @@ impl GreParser {
 
     pub fn reset(&mut self) {
         self.zone_map.clear();
+        self.zone_contents.clear();
         self.instance_map.clear();
         self.visibility_map.clear();
         self.owner_map.clear();
@@ -135,13 +142,127 @@ impl GreParser {
 
         if update_type == "GameStateType_Full" {
             self.rebuild_maps(gs);
-            return self.detect_new_commanders(gs);
+            let mut events = self.detect_new_commanders(gs);
+            events.extend(self.emit_zone_state_syncs());
+            return events;
         }
 
         self.update_maps(gs);
         let mut events = self.detect_new_commanders(gs);
         events.extend(self.process_zone_transfers(gs));
+        // ZoneStateSync also fires on Diffs because MTGA only sends ONE Full
+        // per game, before the opening hand is dealt. Subsequent Diffs add
+        // hand cards via gameObjects + zone.objectInstanceIds updates without
+        // a corresponding ZoneTransfer annotation, so the per-card decrement
+        // path never fires for the opening 7. Recomputing on every state
+        // update covers it. The emit is cheap and idempotent on the frontend.
+        events.extend(self.emit_zone_state_syncs());
         events
+    }
+
+    /// Walks every zone's tracked contents and produces a ZoneStateSync per
+    /// owning seat, listing the grpIds currently in each non-library zone.
+    /// The frontend uses this to recompute library = deck − commander − cards
+    /// visible elsewhere. Driven by `zone_contents` (kept up to date from
+    /// every zones-array update) and `instance_map` (instance → grpId);
+    /// instances whose grpId we don't yet know (e.g. opponent's hand cards
+    /// hidden from us) are simply skipped.
+    fn emit_zone_state_syncs(&self) -> Vec<GameEvent> {
+        // seat_id → (hand, battlefield, graveyard, exile, stack)
+        let mut by_seat: HashMap<u8, (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>)> =
+            HashMap::new();
+        // seat_id → grpId of known top-of-library (None when top is hidden).
+        // Computed below by walking each Library zone's first instance and
+        // checking whether we have its grpId mapped.
+        let mut known_top: HashMap<u8, u32> = HashMap::new();
+
+        for (zone_id, instance_ids) in &self.zone_contents {
+            let zone = match self.zone_map.get(zone_id) {
+                Some(z) => z,
+                None => continue,
+            };
+
+            // Library handling: if we know the grpId of the first instance,
+            // the player has seen the top (scry/surveil/tutor/etc.). Cleared
+            // implicitly on shuffle because handle_shuffle wipes those
+            // instance_ids from instance_map.
+            if zone.zone_type == "ZoneType_Library" {
+                if let Some(&first) = instance_ids.first() {
+                    if let Some(&grp_id) = self.instance_map.get(&first) {
+                        if zone.owner_seat_id != 0 {
+                            known_top.insert(zone.owner_seat_id, grp_id);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Map MTGA zone type → tuple field. Command/Sideboard/etc don't
+            // represent "card has left library" so we ignore them.
+            let zone_kind = match zone.zone_type.as_str() {
+                "ZoneType_Hand" => 0,
+                "ZoneType_Battlefield" => 1,
+                "ZoneType_Graveyard" => 2,
+                "ZoneType_Exile" => 3,
+                "ZoneType_Stack" => 4,
+                _ => continue,
+            };
+
+            for &instance_id in instance_ids {
+                let grp_id = match self.instance_map.get(&instance_id) {
+                    Some(&g) => g,
+                    None => continue, // grpId unknown (e.g. hidden from us)
+                };
+                // Prefer per-instance owner (Stack/Battlefield zones report
+                // ownerSeatId=0 on the zone itself, but cards have it).
+                let owner = self
+                    .owner_map
+                    .get(&instance_id)
+                    .copied()
+                    .filter(|&o| o != 0)
+                    .unwrap_or(zone.owner_seat_id);
+                if owner == 0 {
+                    continue;
+                }
+
+                let entry = by_seat
+                    .entry(owner)
+                    .or_insert_with(|| (vec![], vec![], vec![], vec![], vec![]));
+                match zone_kind {
+                    0 => entry.0.push(grp_id),
+                    1 => entry.1.push(grp_id),
+                    2 => entry.2.push(grp_id),
+                    3 => entry.3.push(grp_id),
+                    4 => entry.4.push(grp_id),
+                    _ => unreachable!(),
+                }
+            }
+        }
+
+        // Make sure we emit a sync for any seat that has a known top even if
+        // their non-library zones are empty (e.g. early-game post-scry).
+        for &seat_id in known_top.keys() {
+            by_seat
+                .entry(seat_id)
+                .or_insert_with(|| (vec![], vec![], vec![], vec![], vec![]));
+        }
+
+        by_seat
+            .into_iter()
+            .map(
+                |(seat_id, (hand, battlefield, graveyard, exile, stack))| {
+                    GameEvent::ZoneStateSync {
+                        seat_id,
+                        hand,
+                        battlefield,
+                        graveyard,
+                        exile,
+                        stack,
+                        top_of_library: known_top.get(&seat_id).copied(),
+                    }
+                },
+            )
+            .collect()
     }
 
     /// Scan gameObjects for any card currently in a Command zone, and emit a
@@ -184,6 +305,7 @@ impl GreParser {
 
     fn rebuild_maps(&mut self, gs: &Value) {
         self.zone_map.clear();
+        self.zone_contents.clear();
         self.instance_map.clear();
         self.visibility_map.clear();
         self.owner_map.clear();
@@ -230,6 +352,20 @@ impl GreParser {
                     owner_seat_id,
                 },
             );
+
+            // Whenever MTGA mentions a zone, the objectInstanceIds it ships
+            // is the authoritative current list — replace the cached contents.
+            // (A zone with no instances is sometimes sent without the field.)
+            if let Some(ids) = zone.get("objectInstanceIds").and_then(|v| v.as_array()) {
+                let contents: Vec<u32> = ids
+                    .iter()
+                    .filter_map(|i| i.as_u64().map(|n| n as u32))
+                    .collect();
+                self.zone_contents.insert(id as u32, contents);
+            } else {
+                // Mentioned but no contents → zone is empty
+                self.zone_contents.insert(id as u32, vec![]);
+            }
         }
     }
 
