@@ -275,7 +275,11 @@ impl EventSink {
                 face_down,
                 ..
             } => {
-                if matches!(to_zone, Zone::Battlefield)
+                // Record opponent cards that become visible: Battlefield for
+                // permanents/lands, Exile for imprint effects (Semblance Anvil,
+                // etc.) where a card goes hand→exile without hitting the stack.
+                // face_down=true means we can't see the card (unknown exile).
+                if (matches!(to_zone, Zone::Battlefield) || matches!(to_zone, Zone::Exile))
                     && *owner_seat_id == self.opponent_seat_id
                     && !face_down
                     && self.current_match_id.is_some()

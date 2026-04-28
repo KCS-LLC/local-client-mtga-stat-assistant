@@ -18,8 +18,14 @@ export function SettingsView() {
 
   function handleExport() {
     setExportState({ status: "busy" });
-    invoke<string>("export_match_history")
-      .then((path) => setExportState({ status: "done", path }))
+    invoke<string | null>("export_match_history")
+      .then((path) => {
+        if (path === null) {
+          setExportState({ status: "idle" }); // user cancelled dialog
+        } else {
+          setExportState({ status: "done", path });
+        }
+      })
       .catch((e) => setExportState({ status: "error", msg: String(e) }));
   }
 

@@ -142,11 +142,13 @@ fn get_card_info(
 }
 
 /// Export full match history as a pretty-printed JSON file.
-/// Tries Desktop first; if it doesn't exist (e.g. OneDrive-redirected), falls
-/// back to %ONEDRIVE%\Desktop, then the app data directory.
-/// Returns the absolute path of the created file on success.
+/// Shows a native Save As dialog so the user picks the location.
+/// Returns the chosen path on success, or None if the user cancelled.
 #[tauri::command]
-fn export_match_history(hub: State<Arc<Mutex<DbHub>>>) -> Result<String, String> {
+fn export_match_history(
+    app: tauri::AppHandle,
+    hub: State<Arc<Mutex<DbHub>>>,
+) -> Result<Option<String>, String> {
     let records = {
         let hub = hub.lock().map_err(|e| e.to_string())?;
         match hub.db() {
@@ -156,33 +158,27 @@ fn export_match_history(hub: State<Arc<Mutex<DbHub>>>) -> Result<String, String>
     };
     let json = serde_json::to_string_pretty(&records).map_err(|e| e.to_string())?;
 
-    let export_dir = find_export_dir();
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let path = export_dir.join(format!("mtga-match-history-{}.json", ts));
+    use tauri_plugin_dialog::DialogExt;
+    let path = app
+        .dialog()
+        .file()
+        .set_file_name("mtga-match-history.json")
+        .add_filter("JSON", &["json"])
+        .blocking_save_file();
 
-    std::fs::write(&path, json).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().to_string())
-}
-
-fn find_export_dir() -> std::path::PathBuf {
-    let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
-    if !user_profile.is_empty() {
-        let desktop = std::path::PathBuf::from(&user_profile).join("Desktop");
-        if desktop.exists() {
-            return desktop;
-        }
-        // OneDrive redirects Desktop to %ONEDRIVE%\Desktop
-        if let Ok(od) = std::env::var("ONEDRIVE") {
-            let od_desktop = std::path::PathBuf::from(od).join("Desktop");
-            if od_desktop.exists() {
-                return od_desktop;
-            }
+    match path {
+        None => Ok(None), // user cancelled
+        Some(file_path) => {
+            let path_buf = match file_path {
+                tauri_plugin_dialog::FilePath::Path(p) => p,
+                tauri_plugin_dialog::FilePath::Url(url) => url
+                    .to_file_path()
+                    .map_err(|_| "invalid file URL from dialog".to_string())?,
+            };
+            std::fs::write(&path_buf, json).map_err(|e| e.to_string())?;
+            Ok(Some(path_buf.to_string_lossy().to_string()))
         }
     }
-    default_app_root()
 }
 
 /// Snapshot Player.log and debug.log into the parent folder for inspection.
@@ -330,6 +326,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(hub.clone())
         .manage(card_db.clone())
         .setup(move |app| {

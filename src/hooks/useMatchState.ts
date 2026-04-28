@@ -159,12 +159,13 @@ function reducer(state: MatchState, action: Action): MatchState {
         }
       }
 
-      // Track the first time we see a card hit Stack or Battlefield. Stack
-      // covers cast spells that resolve to graveyard (Adventurous Impulse).
-      // Battlefield covers lands and resolved permanents. First-write-wins
-      // keeps the dedupe-by-instance semantics correct.
+      // Track the first time we see a card hit Stack, Battlefield, or face-up
+      // Exile. Stack covers cast spells. Battlefield covers resolved permanents
+      // and lands. Exile covers imprint effects (Semblance Anvil, etc.) where
+      // the card goes directly from hand to exile without hitting the stack.
+      // First-write-wins keeps the dedupe-by-instance semantics correct.
       if (
-        (e.to_zone === "Battlefield" || e.to_zone === "Stack") &&
+        (e.to_zone === "Battlefield" || e.to_zone === "Stack" || e.to_zone === "Exile") &&
         !e.face_down
       ) {
         const isPlayer = e.owner_seat_id === state.playerSeatId;
