@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+type ExportState = { status: "idle" } | { status: "busy" } | { status: "done"; path: string } | { status: "error"; msg: string };
+
 interface SettingsSnapshot {
   player_id: string | null;
   player_name: string | null;
@@ -12,6 +14,14 @@ export function SettingsView() {
   const [snap, setSnap] = useState<SettingsSnapshot | null>(null);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [exportState, setExportState] = useState<ExportState>({ status: "idle" });
+
+  function handleExport() {
+    setExportState({ status: "busy" });
+    invoke<string>("export_match_history")
+      .then((path) => setExportState({ status: "done", path }))
+      .catch((e) => setExportState({ status: "error", msg: String(e) }));
+  }
 
   function refresh() {
     invoke<SettingsSnapshot>("get_settings")
@@ -110,6 +120,37 @@ export function SettingsView() {
               Settings can be changed once a player is active.
             </p>
           )}
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold mb-3">Data</h2>
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">Export match history</div>
+              <p className="text-xs text-zinc-500 mt-1">
+                Saves all matches as a JSON file to your Desktop (or app data
+                folder if Desktop isn't found).
+              </p>
+              {exportState.status === "done" && (
+                <p className="text-xs text-green-600 dark:text-green-400 mt-1" title={exportState.path}>
+                  Saved: {exportState.path.split(/[\\/]/).pop()}
+                </p>
+              )}
+              {exportState.status === "error" && (
+                <p className="text-xs text-red-500 mt-1">{exportState.msg}</p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={exportState.status === "busy" || noUser}
+              className="text-xs px-3 py-1 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            >
+              {exportState.status === "busy" ? "Exporting…" : "Export JSON"}
+            </button>
+          </div>
         </div>
       </section>
 

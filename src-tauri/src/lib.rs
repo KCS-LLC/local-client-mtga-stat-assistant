@@ -141,7 +141,9 @@ fn get_card_info(
         .unwrap_or_default()
 }
 
-/// Export full match history as a pretty-printed JSON file on the user's Desktop.
+/// Export full match history as a pretty-printed JSON file.
+/// Tries Desktop first; if it doesn't exist (e.g. OneDrive-redirected), falls
+/// back to %ONEDRIVE%\Desktop, then the app data directory.
 /// Returns the absolute path of the created file on success.
 #[tauri::command]
 fn export_match_history(hub: State<Arc<Mutex<DbHub>>>) -> Result<String, String> {
@@ -154,18 +156,33 @@ fn export_match_history(hub: State<Arc<Mutex<DbHub>>>) -> Result<String, String>
     };
     let json = serde_json::to_string_pretty(&records).map_err(|e| e.to_string())?;
 
-    let desktop = std::env::var("USERPROFILE")
-        .map(|p| std::path::PathBuf::from(p).join("Desktop"))
-        .unwrap_or_else(|_| default_app_root());
-
+    let export_dir = find_export_dir();
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let path = desktop.join(format!("mtga-match-history-{}.json", ts));
+    let path = export_dir.join(format!("mtga-match-history-{}.json", ts));
 
     std::fs::write(&path, json).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+fn find_export_dir() -> std::path::PathBuf {
+    let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
+    if !user_profile.is_empty() {
+        let desktop = std::path::PathBuf::from(&user_profile).join("Desktop");
+        if desktop.exists() {
+            return desktop;
+        }
+        // OneDrive redirects Desktop to %ONEDRIVE%\Desktop
+        if let Ok(od) = std::env::var("ONEDRIVE") {
+            let od_desktop = std::path::PathBuf::from(od).join("Desktop");
+            if od_desktop.exists() {
+                return od_desktop;
+            }
+        }
+    }
+    default_app_root()
 }
 
 /// Snapshot Player.log and debug.log into the parent folder for inspection.
