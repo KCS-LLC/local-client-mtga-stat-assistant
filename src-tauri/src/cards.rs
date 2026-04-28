@@ -11,8 +11,11 @@ pub struct CardDatabase {
     names: HashMap<u32, String>,
     tokens: HashSet<u32>,
     lands: HashSet<u32>,
-    /// Converted mana cost (mana value) per card. Missing = 0.
+    /// Converted mana cost per card. Missing = 0.
     cmc: HashMap<u32, u32>,
+    /// Human-readable mana cost string, e.g. "{2}{W}". Missing for lands and
+    /// zero-cost cards that have no mana symbols.
+    mana_cost: HashMap<u32, String>,
     /// Path of the .mtga file we loaded; used by the watcher to detect updates.
     /// None when no database was found (e.g. MTGA not yet installed).
     loaded_path: Option<PathBuf>,
@@ -25,6 +28,8 @@ pub struct CardInfo {
     pub is_land: bool,
     /// Converted mana cost / mana value. 0 when unknown or a land.
     pub cmc: u32,
+    /// Human-readable mana cost, e.g. "{2}{W}". None for lands / zero-cost.
+    pub mana_cost: Option<String>,
 }
 
 impl CardDatabase {
@@ -32,11 +37,12 @@ impl CardDatabase {
         match Self::try_load() {
             Ok(db) => {
                 dlog!(
-                    "[cards] loaded {} names ({} tokens, {} lands, {} cmc) from {:?}",
+                    "[cards] loaded {} names ({} tokens, {} lands, {} cmc, {} mana_cost) from {:?}",
                     db.names.len(),
                     db.tokens.len(),
                     db.lands.len(),
                     db.cmc.len(),
+                    db.mana_cost.len(),
                     db.loaded_path
                 );
                 db
@@ -59,37 +65,50 @@ impl CardDatabase {
         )
         .map_err(|e| format!("open: {}", e))?;
 
-        // Detect which column holds mana value — "CMC" in older DB builds,
-        // potentially "ManaValue" in newer ones. Fall back to 0 if neither exists.
-        let cmc_col: Option<String> = ["CMC", "ManaValue"].iter().find_map(|&col| {
-            conn.query_row(
-                "SELECT 1 FROM pragma_table_info('Cards') WHERE name = ?1",
-                rusqlite::params![col],
+        // The CMC column is Order_CMCWithXLast in current MTGA DB builds.
+        // Fall back through older names just in case.
+        let cmc_col: Option<String> =
+            ["Order_CMCWithXLast", "CMC", "ManaValue"]
+                .iter()
+                .find_map(|&col| {
+                    conn.query_row(
+                        "SELECT 1 FROM pragma_table_info('Cards') WHERE name = ?1",
+                        rusqlite::params![col],
+                        |_| Ok(()),
+                    )
+                    .ok()
+                    .map(|_| col.to_string())
+                });
+
+        // Mana cost is stored as OldSchoolManaText in the format "o2oW" —
+        // each symbol prefixed with 'o'. We convert to "{2}{W}" at load time.
+        let has_mana_cost_col = conn
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('Cards') WHERE name = 'OldSchoolManaText'",
+                [],
                 |_| Ok(()),
             )
-            .ok()
-            .map(|_| col.to_string())
-        });
+            .is_ok();
 
-        let sql = if let Some(ref col) = cmc_col {
-            format!(
-                "SELECT c.GrpId, c.IsToken, c.Types, l.Loc, COALESCE(c.{}, 0)
-                 FROM Cards c
-                 JOIN Localizations_enUS l ON l.LocId = c.TitleId
-                 WHERE l.Formatted = 1",
-                col
-            )
+        let cmc_expr = cmc_col
+            .as_deref()
+            .map(|col| format!("COALESCE(c.{}, 0)", col))
+            .unwrap_or_else(|| "0".to_string());
+        let mana_cost_expr = if has_mana_cost_col {
+            "COALESCE(c.OldSchoolManaText, '')"
         } else {
-            "SELECT c.GrpId, c.IsToken, c.Types, l.Loc, 0
-             FROM Cards c
-             JOIN Localizations_enUS l ON l.LocId = c.TitleId
-             WHERE l.Formatted = 1"
-                .to_string()
+            "''"
         };
 
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| format!("prepare: {}", e))?;
+        let sql = format!(
+            "SELECT c.GrpId, c.IsToken, c.Types, l.Loc, {}, {}
+             FROM Cards c
+             JOIN Localizations_enUS l ON l.LocId = c.TitleId
+             WHERE l.Formatted = 1",
+            cmc_expr, mana_cost_expr
+        );
+
+        let mut stmt = conn.prepare(&sql).map_err(|e| format!("prepare: {}", e))?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -99,6 +118,7 @@ impl CardDatabase {
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, f64>(4)? as u32,
+                    row.get::<_, String>(5)?,
                 ))
             })
             .map_err(|e| format!("query: {}", e))?;
@@ -107,35 +127,40 @@ impl CardDatabase {
         let mut tokens = HashSet::new();
         let mut lands = HashSet::new();
         let mut cmc_map = HashMap::new();
+        let mut mana_cost_map = HashMap::new();
         for row in rows.flatten() {
-            let (grp, is_token, types, name, cmc) = row;
-            // MTGA's Loc field contains HTML markup like <nobr>...</nobr> (used
-            // to keep multi-word names from breaking across lines in their UI).
-            // Render-time stripping in the frontend would also leak through to
-            // the Decks tab and any other place names appear, so clean once at
-            // load time.
+            let (grp, is_token, types, name, cmc, raw_cost) = row;
             names.insert(grp, strip_html_tags(&name));
             if is_token {
                 tokens.insert(grp);
             }
             // Types is a comma-separated list of CardType enum integers.
-            // 5 = Land per the Enums table. A card is a land if 5 appears
-            // anywhere in the list (e.g. "5", "5,2" creature-land, "1,5" artifact-land).
+            // 5 = Land. A card is a land if 5 appears anywhere in the list.
             if types.split(',').any(|t| t.trim() == "5") {
                 lands.insert(grp);
             }
             if cmc > 0 {
                 cmc_map.insert(grp, cmc);
             }
+            if let Some(cost) = parse_mana_cost(&raw_cost) {
+                mana_cost_map.insert(grp, cost);
+            }
         }
 
-        dlog!("[cards] cmc_col={:?}, {} cmc values loaded", cmc_col, cmc_map.len());
+        dlog!(
+            "[cards] cmc_col={:?} has_mana_cost={} — {} cmc values, {} mana costs loaded",
+            cmc_col,
+            has_mana_cost_col,
+            cmc_map.len(),
+            mana_cost_map.len()
+        );
 
         Ok(Self {
             names,
             tokens,
             lands,
             cmc: cmc_map,
+            mana_cost: mana_cost_map,
             loaded_path: Some(path),
         })
     }
@@ -152,6 +177,7 @@ impl CardDatabase {
                             is_token: self.tokens.contains(id),
                             is_land: self.lands.contains(id),
                             cmc: self.cmc.get(id).copied().unwrap_or(0),
+                            mana_cost: self.mana_cost.get(id).cloned(),
                         },
                     )
                 })
@@ -173,18 +199,15 @@ pub fn spawn_watcher(cards: SharedCards) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(60));
 
-        let current = cards
-            .read()
-            .ok()
-            .and_then(|c| c.loaded_path.clone());
+        let current = cards.read().ok().and_then(|c| c.loaded_path.clone());
 
         let latest = match find_card_db_path() {
             Ok(p) => p,
-            Err(_) => continue, // MTGA not installed or directory unreadable
+            Err(_) => continue,
         };
 
         if Some(&latest) == current.as_ref() {
-            continue; // unchanged
+            continue;
         }
 
         dlog!(
@@ -197,6 +220,30 @@ pub fn spawn_watcher(cards: SharedCards) {
             *guard = new_db;
         }
     });
+}
+
+/// Convert MTGA's internal mana cost format to standard notation.
+/// MTGA stores mana cost as "o2oW" where each symbol is prefixed with 'o'.
+/// Examples: "o2oW" → "{2}{W}", "oB" → "{B}", "o(R/G)" → "{R/G}"
+/// Returns None for empty/land/zero-cost strings.
+fn parse_mana_cost(raw: &str) -> Option<String> {
+    if raw.is_empty() {
+        return None;
+    }
+    let result: String = raw
+        .split('o')
+        .filter(|s| !s.is_empty())
+        .map(|sym| {
+            // Hybrid mana stored as "(R/G)" — strip outer parens, brace it.
+            let s = sym.trim_matches(|c| c == '(' || c == ')');
+            format!("{{{}}}", s)
+        })
+        .collect();
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
 
 /// Remove `<...>` HTML-style tags. MTGA stores names like

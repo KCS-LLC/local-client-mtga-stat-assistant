@@ -163,19 +163,24 @@ export function DeckExplorer({ initialDeckId }: Props) {
               </div>
               <ul className="space-y-1 text-sm max-h-[70vh] overflow-auto">
                 {sorted.map(([id, qty]) => {
-                  const isLand = info.get(id)?.is_land === true;
+                  const cardInfo = info.get(id);
+                  const isLand = cardInfo?.is_land === true;
+                  const manaCost = cardInfo?.mana_cost ?? null;
                   return (
                     <li
                       key={id}
-                      className="flex justify-between gap-2 text-zinc-700 dark:text-zinc-300"
+                      className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300"
                     >
                       <span
-                        className={
-                          isLand ? "text-emerald-700 dark:text-emerald-400" : ""
-                        }
+                        className={`flex-1 min-w-0 truncate ${isLand ? "text-emerald-700 dark:text-emerald-400" : ""}`}
                       >
                         {cardLabel(id, info)}
                       </span>
+                      {manaCost && (
+                        <span className="text-zinc-400 dark:text-zinc-500 text-xs whitespace-nowrap">
+                          {manaCost}
+                        </span>
+                      )}
                       <span className="text-zinc-500 tabular-nums whitespace-nowrap">
                         × {qty}
                       </span>

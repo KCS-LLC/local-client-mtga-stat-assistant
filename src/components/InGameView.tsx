@@ -1,6 +1,10 @@
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import type { MatchState } from "../hooks/useMatchState";
 import { useCardInfo, type CardInfo } from "../hooks/useCardNames";
+
+type SortMode = "alpha" | "cmc";
+const SORT_MODES: SortMode[] = ["alpha", "cmc"];
+const SORT_LABELS: Record<SortMode, string> = { alpha: "A–Z", cmc: "CMC" };
 
 interface Props {
   state: MatchState;
@@ -63,7 +67,22 @@ function cardLabel(id: number, info: Map<number, CardInfo>): string {
   return info.get(id)?.name ?? `Card #${id}`;
 }
 
-/** Sort entries [grpId, count] by CMC ascending, lands at bottom; alphabetical within same CMC. */
+function sortByAlphaLandsBottom(
+  entries: Array<[number, number]>,
+  info: Map<number, CardInfo>,
+): Array<[number, number]> {
+  return entries.slice().sort((a, b) => {
+    const ai = info.get(a[0]);
+    const bi = info.get(b[0]);
+    const aLand = ai?.is_land ? 1 : 0;
+    const bLand = bi?.is_land ? 1 : 0;
+    if (aLand !== bLand) return aLand - bLand;
+    const an = ai?.name ?? `Card #${a[0]}`;
+    const bn = bi?.name ?? `Card #${b[0]}`;
+    return an.localeCompare(bn);
+  });
+}
+
 function sortByCmcLandsBottom(
   entries: Array<[number, number]>,
   info: Map<number, CardInfo>,
@@ -80,7 +99,7 @@ function sortByCmcLandsBottom(
       if (aCmc !== bCmc) return aCmc - bCmc;
     }
     const an = ai?.name ?? `Card #${a[0]}`;
-    const bn = info.get(b[0])?.name ?? `Card #${b[0]}`;
+    const bn = bi?.name ?? `Card #${b[0]}`;
     return an.localeCompare(bn);
   });
 }
@@ -121,17 +140,25 @@ function CardCountList({
   if (entries.length === 0) return null;
   return (
     <ul className="space-y-1 mt-3 max-h-96 overflow-auto">
-      {sortByCmcLandsBottom(entries, info).map(([id, count]) => (
-        <li
-          key={id}
-          className="flex justify-between text-zinc-700 dark:text-zinc-300"
-        >
-          <span>{cardLabel(id, info)}</span>
-          {count > 1 && (
-            <span className="text-zinc-500 ml-2">× {count}</span>
-          )}
-        </li>
-      ))}
+      {sortByCmcLandsBottom(entries, info).map(([id, count]) => {
+        const manaCost = info.get(id)?.mana_cost ?? null;
+        return (
+          <li
+            key={id}
+            className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300"
+          >
+            <span className="flex-1 min-w-0 truncate">{cardLabel(id, info)}</span>
+            {manaCost && (
+              <span className="text-zinc-400 dark:text-zinc-500 text-xs whitespace-nowrap">
+                {manaCost}
+              </span>
+            )}
+            {count > 1 && (
+              <span className="text-zinc-500 whitespace-nowrap">× {count}</span>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -145,15 +172,16 @@ function LibraryWithOdds({
   info,
   librarySize,
   knownTop,
+  sortMode,
 }: {
   entries: Array<[number, number]>;
   info: Map<number, CardInfo>;
   librarySize: number;
   knownTop: number | null;
+  sortMode: SortMode;
 }) {
   if (entries.length === 0) return null;
-  // Sort: still-in-library first (by name), then exhausted entries last
-  const sorted = sortByCmcLandsBottom(entries, info).filter(([, c]) => c > 0);
+  const sorted = (sortMode === "cmc" ? sortByCmcLandsBottom : sortByAlphaLandsBottom)(entries, info).filter(([, c]) => c > 0);
   return (
     <ul className="space-y-1 mt-1 text-xs">
       {sorted.map(([id, count]) => {
@@ -163,21 +191,28 @@ function LibraryWithOdds({
         } else {
           pct = librarySize > 0 ? (count / librarySize) * 100 : 0;
         }
-        const isLand = info.get(id)?.is_land === true;
+        const cardInfo = info.get(id);
+        const isLand = cardInfo?.is_land === true;
         const isTop = knownTop === id;
+        const manaCost = cardInfo?.mana_cost ?? null;
         return (
           <li
             key={id}
-            className={`flex justify-between gap-2 ${
+            className={`flex items-center gap-2 ${
               isTop
                 ? "text-amber-700 dark:text-amber-400 font-medium"
                 : "text-zinc-700 dark:text-zinc-300"
             }`}
           >
-            <span className={isLand && !isTop ? "text-emerald-700 dark:text-emerald-400" : ""}>
+            <span className={`flex-1 min-w-0 truncate ${isLand && !isTop ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
               {isTop && "↑ "}
               {cardLabel(id, info)}
             </span>
+            {manaCost && (
+              <span className="text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+                {manaCost}
+              </span>
+            )}
             <span className="text-zinc-500 tabular-nums whitespace-nowrap">
               {count > 1 ? `${count}×  ` : ""}
               {pct.toFixed(2)}%
@@ -190,6 +225,13 @@ function LibraryWithOdds({
 }
 
 export function InGameView({ state }: Props) {
+  const [librarySortMode, setLibrarySortModeState] = useState<SortMode>(
+    () => (localStorage.getItem("librarySortMode") as SortMode | null) ?? "alpha",
+  );
+  function setLibrarySortMode(mode: SortMode) {
+    localStorage.setItem("librarySortMode", mode);
+    setLibrarySortModeState(mode);
+  }
   const opponentThisGame =
     state.opponentInstances.get(state.gameNumber) ?? new Map<number, number>();
   const playerThisGame =
@@ -270,11 +312,29 @@ export function InGameView({ state }: Props) {
       <div className="grid grid-cols-3 gap-4 p-4 flex-1 min-h-0">
       {/* Column 1: your decklist with live library + draw odds */}
       <section className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 overflow-auto bg-white dark:bg-zinc-950">
-        <div className="flex items-baseline justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 gap-2">
           <h2 className="text-base font-semibold">Your library</h2>
-          <span className="text-xs text-zinc-500 tabular-nums">
-            {librarySize} cards
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs text-zinc-500 tabular-nums">
+              {librarySize} cards
+            </span>
+            <div className="flex rounded border border-zinc-200 dark:border-zinc-700 overflow-hidden text-xs">
+              {SORT_MODES.map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setLibrarySortMode(mode)}
+                  className={`px-2 py-0.5 ${
+                    librarySortMode === mode
+                      ? "bg-zinc-200 dark:bg-zinc-700 font-medium"
+                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
+                  }`}
+                >
+                  {SORT_LABELS[mode]}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         {knownTopName !== null && (
           <div className="mb-2 text-xs flex justify-between text-amber-700 dark:text-amber-400">
@@ -295,6 +355,7 @@ export function InGameView({ state }: Props) {
           info={info}
           librarySize={librarySize}
           knownTop={state.playerKnownTop}
+          sortMode={librarySortMode}
         />
       </section>
 
