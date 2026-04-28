@@ -171,16 +171,14 @@ export function DeckExplorer({ initialDeckId }: Props) {
                       key={id}
                       className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300"
                     >
+                      <span className="text-zinc-400 dark:text-zinc-500 text-xs whitespace-nowrap shrink-0 w-20">
+                        {manaCost ?? ""}
+                      </span>
                       <span
                         className={`flex-1 min-w-0 truncate ${isLand ? "text-emerald-700 dark:text-emerald-400" : ""}`}
                       >
                         {cardLabel(id, info)}
                       </span>
-                      {manaCost && (
-                        <span className="text-zinc-400 dark:text-zinc-500 text-xs whitespace-nowrap">
-                          {manaCost}
-                        </span>
-                      )}
                       <span className="text-zinc-500 tabular-nums whitespace-nowrap">
                         × {qty}
                       </span>

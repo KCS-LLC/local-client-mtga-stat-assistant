@@ -147,12 +147,10 @@ function CardCountList({
             key={id}
             className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300"
           >
+            <span className="text-zinc-400 dark:text-zinc-500 text-xs whitespace-nowrap shrink-0 w-16">
+              {manaCost ?? ""}
+            </span>
             <span className="flex-1 min-w-0 truncate">{cardLabel(id, info)}</span>
-            {manaCost && (
-              <span className="text-zinc-400 dark:text-zinc-500 text-xs whitespace-nowrap">
-                {manaCost}
-              </span>
-            )}
             {count > 1 && (
               <span className="text-zinc-500 whitespace-nowrap">× {count}</span>
             )}
@@ -204,15 +202,13 @@ function LibraryWithOdds({
                 : "text-zinc-700 dark:text-zinc-300"
             }`}
           >
+            <span className="text-zinc-400 dark:text-zinc-500 whitespace-nowrap shrink-0 w-16">
+              {manaCost ?? ""}
+            </span>
             <span className={`flex-1 min-w-0 truncate ${isLand && !isTop ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
               {isTop && "↑ "}
               {cardLabel(id, info)}
             </span>
-            {manaCost && (
-              <span className="text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
-                {manaCost}
-              </span>
-            )}
             <span className="text-zinc-500 tabular-nums whitespace-nowrap">
               {count > 1 ? `${count}×  ` : ""}
               {pct.toFixed(2)}%
