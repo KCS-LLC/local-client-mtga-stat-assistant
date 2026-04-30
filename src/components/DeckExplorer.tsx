@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { DeckSnapshot } from "../types/db";
 import { useCardInfo, type CardInfo } from "../hooks/useCardNames";
+import { CardName } from "./CardName";
 
 type SortMode = "alpha" | "cmc";
 
@@ -174,11 +175,10 @@ export function DeckExplorer({ initialDeckId }: Props) {
                       <span className="text-zinc-400 dark:text-zinc-500 text-xs whitespace-nowrap shrink-0 w-20">
                         {manaCost ?? ""}
                       </span>
-                      <span
+                      <CardName
+                        name={cardLabel(id, info)}
                         className={`flex-1 min-w-0 truncate ${isLand ? "text-emerald-700 dark:text-emerald-400" : ""}`}
-                      >
-                        {cardLabel(id, info)}
-                      </span>
+                      />
                       <span className="text-zinc-500 tabular-nums whitespace-nowrap">
                         × {qty}
                       </span>

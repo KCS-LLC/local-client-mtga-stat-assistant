@@ -19,6 +19,17 @@ export function OutOfGameView({ onOpenDeck }: Props) {
       .catch(() => {});
   }, []);
 
+  // Compute going-first/second W/L from match history
+  const firstRecord = { wins: 0, losses: 0 };
+  const secondRecord = { wins: 0, losses: 0 };
+  for (const m of history) {
+    if (m.played_first === null || (m.result !== "Win" && m.result !== "Loss")) continue;
+    const bucket = m.played_first ? firstRecord : secondRecord;
+    if (m.result === "Win") bucket.wins++;
+    else bucket.losses++;
+  }
+  const hasPlayOrder = firstRecord.wins + firstRecord.losses + secondRecord.wins + secondRecord.losses > 0;
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-8">
       <section>
@@ -56,6 +67,39 @@ export function OutOfGameView({ onOpenDeck }: Props) {
         )}
       </section>
 
+      {hasPlayOrder && (
+        <section>
+          <h2 className="text-lg font-semibold mb-3">Win/Loss by play order</h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-200 dark:border-zinc-800">
+                <th className="text-left py-2">Order</th>
+                <th className="text-right py-2">Wins</th>
+                <th className="text-right py-2">Losses</th>
+                <th className="text-right py-2">Win rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {([
+                { label: "Went first", rec: firstRecord },
+                { label: "Went second", rec: secondRecord },
+              ] as const).map(({ label, rec }) => {
+                const total = rec.wins + rec.losses;
+                const rate = total > 0 ? Math.round((rec.wins / total) * 100) : 0;
+                return (
+                  <tr key={label} className="border-b border-zinc-100 dark:border-zinc-900">
+                    <td className="py-2">{label}</td>
+                    <td className="py-2 text-right">{rec.wins}</td>
+                    <td className="py-2 text-right">{rec.losses}</td>
+                    <td className="py-2 text-right">{total > 0 ? `${rate}%` : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <section>
         <h2 className="text-lg font-semibold mb-3">Recent matches</h2>
         {history.length === 0 ? (
@@ -68,6 +112,7 @@ export function OutOfGameView({ onOpenDeck }: Props) {
                 <th className="text-left py-2">Format</th>
                 <th className="text-left py-2">Opponent</th>
                 <th className="text-left py-2">Deck</th>
+                <th className="text-right py-2">Order</th>
                 <th className="text-right py-2">Result</th>
               </tr>
             </thead>
@@ -94,6 +139,9 @@ export function OutOfGameView({ onOpenDeck }: Props) {
                     ) : (
                       (m.deck_name ?? "—")
                     )}
+                  </td>
+                  <td className="py-2 text-right text-zinc-500">
+                    {m.played_first === true ? "1st" : m.played_first === false ? "2nd" : "—"}
                   </td>
                   <td
                     className={`py-2 text-right font-medium ${

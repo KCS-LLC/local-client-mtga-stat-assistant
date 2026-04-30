@@ -15,6 +15,14 @@ export function SettingsView() {
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [exportState, setExportState] = useState<ExportState>({ status: "idle" });
+  const [cardImageSource, setCardImageSourceState] = useState<"scryfall" | "gatherer">(
+    () => (localStorage.getItem("cardImageSource") as "scryfall" | "gatherer" | null) ?? "scryfall",
+  );
+
+  function setCardImageSource(src: "scryfall" | "gatherer") {
+    localStorage.setItem("cardImageSource", src);
+    setCardImageSourceState(src);
+  }
 
   function handleExport() {
     setExportState({ status: "busy" });
@@ -121,6 +129,31 @@ export function SettingsView() {
             onChange={(v) => toggleSetting("backup_on_launch", v)}
             disabled={noUser}
           />
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">Card image source</div>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Where to load card images when hovering a card name.
+                Gatherer falls back to Scryfall for Arena-only cards.
+              </p>
+            </div>
+            <div className="flex rounded border border-zinc-200 dark:border-zinc-700 overflow-hidden text-xs shrink-0">
+              {(["scryfall", "gatherer"] as const).map((src) => (
+                <button
+                  key={src}
+                  type="button"
+                  onClick={() => setCardImageSource(src)}
+                  className={`px-3 py-1 capitalize ${
+                    cardImageSource === src
+                      ? "bg-zinc-200 dark:bg-zinc-700 font-medium"
+                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
+                  }`}
+                >
+                  {src.charAt(0).toUpperCase() + src.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
           {noUser && (
             <p className="text-xs text-zinc-500">
               Settings can be changed once a player is active.

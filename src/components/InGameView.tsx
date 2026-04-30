@@ -1,6 +1,7 @@
 import { useReducer, useState } from "react";
 import type { MatchState } from "../hooks/useMatchState";
 import { useCardInfo, type CardInfo } from "../hooks/useCardNames";
+import { CardName } from "./CardName";
 
 type SortMode = "alpha" | "cmc";
 const SORT_MODES: SortMode[] = ["alpha", "cmc"];
@@ -118,9 +119,7 @@ function CommanderList({
       <ul className="text-sm space-y-1">
         {Array.from(tax.entries()).map(([id, t]) => (
           <li key={id} className="flex justify-between">
-            <span className="text-zinc-700 dark:text-zinc-300">
-              {cardLabel(id, info)}
-            </span>
+            <CardName name={cardLabel(id, info)} className="text-zinc-700 dark:text-zinc-300" />
             {t > 0 && <span>Tax +{t}</span>}
           </li>
         ))}
@@ -150,7 +149,7 @@ function CardCountList({
             <span className="text-zinc-400 dark:text-zinc-500 text-xs whitespace-nowrap shrink-0 w-16">
               {manaCost ?? ""}
             </span>
-            <span className="flex-1 min-w-0 truncate">{cardLabel(id, info)}</span>
+            <CardName name={cardLabel(id, info)} className="flex-1 min-w-0 truncate" />
             {count > 1 && (
               <span className="text-zinc-500 whitespace-nowrap">× {count}</span>
             )}
@@ -205,10 +204,11 @@ function LibraryWithOdds({
             <span className="text-zinc-400 dark:text-zinc-500 whitespace-nowrap shrink-0 w-16">
               {manaCost ?? ""}
             </span>
-            <span className={`flex-1 min-w-0 truncate ${isLand && !isTop ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
-              {isTop && "↑ "}
-              {cardLabel(id, info)}
-            </span>
+            <CardName
+              name={cardLabel(id, info)}
+              prefix={isTop ? "↑ " : undefined}
+              className={`flex-1 min-w-0 truncate ${isLand && !isTop ? "text-emerald-700 dark:text-emerald-400" : ""}`}
+            />
             <span className="text-zinc-500 tabular-nums whitespace-nowrap">
               {count > 1 ? `${count}×  ` : ""}
               {pct.toFixed(2)}%
