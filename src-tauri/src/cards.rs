@@ -262,6 +262,7 @@ fn strip_html_tags(s: &str) -> String {
     out
 }
 
+#[cfg(target_os = "windows")]
 fn find_card_db_path() -> Result<PathBuf, String> {
     // MTGA installs under "Program Files" on whichever drive the user chose.
     // Scan C–Z so non-default install locations still work.
@@ -283,4 +284,25 @@ fn find_card_db_path() -> Result<PathBuf, String> {
         }
     }
     Err("no Raw_CardDatabase_*.mtga found — is MTGA installed?".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn find_card_db_path() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let raw_dir = PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join("com.wizards.mtga")
+        .join("Downloads")
+        .join("Data");
+    let entries = std::fs::read_dir(&raw_dir)
+        .map_err(|e| format!("read_dir {:?}: {}", raw_dir, e))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("Raw_CardDatabase_") && name.ends_with(".mtga") {
+            return Ok(entry.path());
+        }
+    }
+    Err(format!("no Raw_CardDatabase_*.mtga in {:?}", raw_dir))
 }

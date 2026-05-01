@@ -231,22 +231,45 @@ fn copy_logs_for_review(
 }
 
 fn default_log_path() -> std::path::PathBuf {
-    let app_data = std::env::var("APPDATA").unwrap_or_default();
-    let local_low = std::path::Path::new(&app_data)
-        .parent()
-        .map(|p| p.join("LocalLow"))
-        .unwrap_or_else(|| std::path::PathBuf::from("LocalLow"));
-    local_low
-        .join("Wizards Of The Coast")
-        .join("MTGA")
-        .join("Player.log")
+    #[cfg(target_os = "windows")]
+    {
+        let app_data = std::env::var("APPDATA").unwrap_or_default();
+        let local_low = std::path::Path::new(&app_data)
+            .parent()
+            .map(|p| p.join("LocalLow"))
+            .unwrap_or_else(|| std::path::PathBuf::from("LocalLow"));
+        local_low
+            .join("Wizards Of The Coast")
+            .join("MTGA")
+            .join("Player.log")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Logs")
+            .join("Wizards Of The Coast")
+            .join("MTGA")
+            .join("Player.log")
+    }
 }
 
-/// Root data directory for the app (`%APPDATA%/local-client-mtga-stat-assistant`).
-/// Per-user DBs live below this at `users/<user_id>/stats.db`.
+/// Root data directory for the app. Per-user DBs live below this at `users/<user_id>/stats.db`.
 fn default_app_root() -> std::path::PathBuf {
-    let app_data = std::env::var("APPDATA").unwrap_or_default();
-    std::path::Path::new(&app_data).join("local-client-mtga-stat-assistant")
+    #[cfg(target_os = "windows")]
+    {
+        let app_data = std::env::var("APPDATA").unwrap_or_default();
+        std::path::Path::new(&app_data).join("local-client-mtga-stat-assistant")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        std::path::Path::new(&home)
+            .join("Library")
+            .join("Application Support")
+            .join("local-client-mtga-stat-assistant")
+    }
 }
 
 fn watch_log(app_handle: tauri::AppHandle, hub: Arc<Mutex<DbHub>>, cards: SharedCards) {
@@ -318,10 +341,7 @@ fn watch_log(app_handle: tauri::AppHandle, hub: Arc<Mutex<DbHub>>, cards: Shared
 }
 
 fn default_debug_log_path() -> std::path::PathBuf {
-    let app_data = std::env::var("APPDATA").unwrap_or_default();
-    std::path::Path::new(&app_data)
-        .join("local-client-mtga-stat-assistant")
-        .join("debug.log")
+    default_app_root().join("debug.log")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

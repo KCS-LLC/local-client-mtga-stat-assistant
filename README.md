@@ -4,7 +4,7 @@ A lightweight desktop companion for **Magic: The Gathering Arena** that runs alo
 
 Reads MTGA's local log file in real time. No network calls, no account required, no data leaves your machine (except Scryfall API requests for card hover images).
 
-> **Windows only.** MTGA Arena does not have a Mac or Linux client.
+> **Windows and macOS.** Linux is not supported (no native MTGA client).
 
 ---
 
@@ -52,6 +52,13 @@ Reads MTGA's local log file in real time. No network calls, no account required,
 
 ---
 
+## Installing a release build
+
+Download the latest release from the [Releases page](../../releases):
+
+- **Windows:** run the `.msi` installer. SmartScreen may warn about an unknown publisher — click "More info" → "Run anyway". This is normal for unsigned community software.
+- **macOS:** open the `.dmg`, drag the app to Applications. On first launch, right-click → Open (required once for apps from outside the App Store).
+
 ## Building from source
 
 ```bash
@@ -68,13 +75,12 @@ The production installer is written to `src-tauri/target/release/bundle/`.
 
 ## Log file location
 
-The app auto-detects the log at:
+The app auto-detects the log — no configuration needed.
 
-```
-%APPDATA%\..\LocalLow\Wizards Of The Coast\MTGA\Player.log
-```
-
-No configuration needed.
+| Platform | Path |
+|---|---|
+| Windows | `%AppData%\..\LocalLow\Wizards Of The Coast\MTGA\Player.log` |
+| macOS | `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log` |
 
 ---
 
@@ -86,7 +92,12 @@ Card names, mana costs, and CMC are loaded from MTGA's local SQLite database:
 <MTGA install drive>:\Program Files\Wizards of the Coast\MTGA\MTGA_Data\Downloads\Raw\Raw_CardDatabase_*.mtga
 ```
 
-The app scans drive letters C–Z so non-default install locations work automatically. If MTGA isn't installed, card IDs display as `Card #12345` instead of names — everything else still works.
+| Platform | Path |
+|---|---|
+| Windows | `<drive>:\Program Files\Wizards of the Coast\MTGA\MTGA_Data\Downloads\Raw\` (scans C–Z) |
+| macOS | `~/Library/Application Support/com.wizards.mtga/Downloads/Data/` |
+
+If the card DB isn't found, card IDs display as `Card #12345` instead of names — everything else still works.
 
 ---
 

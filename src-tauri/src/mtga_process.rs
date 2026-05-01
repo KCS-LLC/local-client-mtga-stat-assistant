@@ -1,7 +1,9 @@
 use sysinfo::{ProcessesToUpdate, System};
 
+#[cfg(target_os = "windows")]
 const MTGA_PROCESS: &str = "MTGA.exe";
-const MTGA_DEFAULT_PATH: &str = "C:\\Program Files\\Wizards of the Coast\\MTGA\\MTGA.exe";
+#[cfg(target_os = "macos")]
+const MTGA_PROCESS: &str = "MTGA";
 
 pub fn is_running() -> bool {
     let mut sys = System::new();
@@ -12,9 +14,23 @@ pub fn is_running() -> bool {
 }
 
 pub fn launch(path: Option<&str>) -> Result<(), String> {
-    let exe = path.unwrap_or(MTGA_DEFAULT_PATH);
-    std::process::Command::new(exe)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Failed to launch MTGA: {}", e))
+    #[cfg(target_os = "windows")]
+    {
+        let exe = path.unwrap_or("C:\\Program Files\\Wizards of the Coast\\MTGA\\MTGA.exe");
+        std::process::Command::new(exe)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Failed to launch MTGA: {}", e))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // On macOS use `open -a` to launch the app bundle; path is the app name or full .app path
+        let app = path.unwrap_or("MTG Arena");
+        std::process::Command::new("open")
+            .arg("-a")
+            .arg(app)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Failed to launch MTGA: {}", e))
+    }
 }
