@@ -22,3 +22,6 @@ src-tauri/target/
 # OS
 .DS_Store
 Thumbs.db
+
+# Exported data files
+mtga-match-history.json

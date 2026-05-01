@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type ExportState = { status: "idle" } | { status: "busy" } | { status: "done"; path: string } | { status: "error"; msg: string };
+type CopyLogsState = { status: "idle" } | { status: "busy" } | { status: "done"; msg: string } | { status: "error"; msg: string };
 
 interface SettingsSnapshot {
   player_id: string | null;
   player_name: string | null;
   track_deck_history: boolean;
   backup_on_launch: boolean;
+  developer_mode: boolean;
 }
 
 export function SettingsView() {
@@ -15,6 +17,7 @@ export function SettingsView() {
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [exportState, setExportState] = useState<ExportState>({ status: "idle" });
+  const [copyLogsState, setCopyLogsState] = useState<CopyLogsState>({ status: "idle" });
   const [cardImageSource, setCardImageSourceState] = useState<"scryfall" | "gatherer">(
     () => (localStorage.getItem("cardImageSource") as "scryfall" | "gatherer" | null) ?? "scryfall",
   );
@@ -22,6 +25,17 @@ export function SettingsView() {
   function setCardImageSource(src: "scryfall" | "gatherer") {
     localStorage.setItem("cardImageSource", src);
     setCardImageSourceState(src);
+  }
+
+  function handleCopyLogs() {
+    setCopyLogsState({ status: "busy" });
+    invoke<string>("copy_logs_for_review")
+      .then((msg) => setCopyLogsState({ status: "done", msg }))
+      .catch((e) => {
+        const msg = String(e);
+        if (msg === "cancelled") setCopyLogsState({ status: "idle" });
+        else setCopyLogsState({ status: "error", msg });
+      });
   }
 
   function handleExport() {
@@ -190,6 +204,42 @@ export function SettingsView() {
               {exportState.status === "busy" ? "Exporting…" : "Export JSON"}
             </button>
           </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold mb-3">Developer</h2>
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
+          <ToggleRow
+            label="Developer mode"
+            description="Enables debug tools. Not needed for normal use."
+            value={snap.developer_mode}
+            onChange={(v) => toggleSetting("developer_mode", v)}
+          />
+          {snap.developer_mode && (
+            <div className="flex items-start justify-between gap-4 pt-1 border-t border-zinc-100 dark:border-zinc-800">
+              <div>
+                <div className="text-sm font-medium">Copy logs for review</div>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Copies Player.log and debug.log to a folder you choose.
+                </p>
+                {copyLogsState.status === "done" && (
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-1">{copyLogsState.msg}</p>
+                )}
+                {copyLogsState.status === "error" && (
+                  <p className="text-xs text-red-500 mt-1">{copyLogsState.msg}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyLogs}
+                disabled={copyLogsState.status === "busy"}
+                className="text-xs px-3 py-1 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              >
+                {copyLogsState.status === "busy" ? "Copying…" : "Copy logs…"}
+              </button>
+            </div>
+          )}
         </div>
       </section>
 

@@ -31,6 +31,7 @@ struct SettingsSnapshot {
     player_name: Option<String>,
     track_deck_history: bool,
     backup_on_launch: bool,
+    developer_mode: bool,
 }
 
 #[tauri::command]
@@ -75,7 +76,7 @@ fn get_settings(hub: State<Arc<Mutex<DbHub>>>) -> Result<SettingsSnapshot, Strin
     let hub = hub.lock().map_err(|e| e.to_string())?;
     let user_id = hub.current_user_id().map(|s| s.to_string());
 
-    let (player_name, track_deck_history, backup_on_launch) = match hub.db() {
+    let (player_name, track_deck_history, backup_on_launch, developer_mode) = match hub.db() {
         Some(db) => {
             // Player name from the most recent match this user appears in
             let recent = db.get_recent_players(20).unwrap_or_default();
@@ -90,9 +91,13 @@ fn get_settings(hub: State<Arc<Mutex<DbHub>>>) -> Result<SettingsSnapshot, Strin
                 .get_setting("backup_on_launch")
                 .map(|v| v == "true")
                 .unwrap_or(true);
-            (name, track, backup)
+            let dev = db
+                .get_setting("developer_mode")
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            (name, track, backup, dev)
         }
-        None => (None, true, true),
+        None => (None, true, true, false),
     };
 
     Ok(SettingsSnapshot {
@@ -100,6 +105,7 @@ fn get_settings(hub: State<Arc<Mutex<DbHub>>>) -> Result<SettingsSnapshot, Strin
         player_name,
         track_deck_history,
         backup_on_launch,
+        developer_mode,
     })
 }
 
@@ -110,7 +116,7 @@ fn set_app_setting(
     value: String,
 ) -> Result<(), String> {
     // Whitelist keys that are safe to set from the UI.
-    let allowed = ["track_deck_history", "backup_on_launch"];
+    let allowed = ["track_deck_history", "backup_on_launch", "developer_mode"];
     if !allowed.contains(&key.as_str()) {
         return Err(format!("setting '{}' is not user-configurable", key));
     }
@@ -181,20 +187,39 @@ fn export_match_history(
     }
 }
 
-/// Snapshot Player.log and debug.log into the parent folder for inspection.
-/// Hardcoded destination is the working directory I (Claude) can read while
-/// developing — saves the user from manually copying files between sessions.
+/// Copy Player.log and debug.log to a user-chosen folder.
+/// Only callable when developer_mode is enabled in settings.
 #[tauri::command]
-fn copy_logs_for_review() -> Result<String, String> {
-    let dest_dir = std::path::PathBuf::from("C:/Users/renga/Claude/MTGA");
-    if !dest_dir.exists() {
-        return Err(format!("destination not found: {:?}", dest_dir));
+fn copy_logs_for_review(
+    app: tauri::AppHandle,
+    hub: State<Arc<Mutex<DbHub>>>,
+) -> Result<String, String> {
+    {
+        let hub = hub.lock().map_err(|e| e.to_string())?;
+        let enabled = hub
+            .db()
+            .and_then(|db| db.get_setting("developer_mode"))
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !enabled {
+            return Err("developer mode is not enabled".to_string());
+        }
     }
+
+    use tauri_plugin_dialog::DialogExt;
+    let dest_dir = match app.dialog().file().blocking_pick_folder() {
+        None => return Err("cancelled".to_string()),
+        Some(tauri_plugin_dialog::FilePath::Path(p)) => p,
+        Some(tauri_plugin_dialog::FilePath::Url(url)) => url
+            .to_file_path()
+            .map_err(|_| "invalid folder URL from dialog".to_string())?,
+    };
+
     let pairs = [
         (default_log_path(), "Player.log"),
         (default_debug_log_path(), "debug.log"),
     ];
-    let mut copied: Vec<String> = vec![];
+    let mut copied = vec![];
     for (src, name) in &pairs {
         let dst = dest_dir.join(name);
         match std::fs::copy(src, &dst) {

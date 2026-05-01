@@ -263,19 +263,24 @@ fn strip_html_tags(s: &str) -> String {
 }
 
 fn find_card_db_path() -> Result<PathBuf, String> {
-    let raw_dir = PathBuf::from(
-        "C:/Program Files/Wizards of the Coast/MTGA/MTGA_Data/Downloads/Raw",
-    );
-    let entries =
-        std::fs::read_dir(&raw_dir).map_err(|e| format!("read_dir {:?}: {}", raw_dir, e))?;
-
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with("Raw_CardDatabase_") && name.ends_with(".mtga") {
-            return Ok(entry.path());
+    // MTGA installs under "Program Files" on whichever drive the user chose.
+    // Scan C–Z so non-default install locations still work.
+    for drive in b'C'..=b'Z' {
+        let raw_dir = PathBuf::from(format!(
+            "{}:/Program Files/Wizards of the Coast/MTGA/MTGA_Data/Downloads/Raw",
+            drive as char
+        ));
+        let entries = match std::fs::read_dir(&raw_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("Raw_CardDatabase_") && name.ends_with(".mtga") {
+                return Ok(entry.path());
+            }
         }
     }
-
-    Err(format!("no Raw_CardDatabase_*.mtga in {:?}", raw_dir))
+    Err("no Raw_CardDatabase_*.mtga found — is MTGA installed?".to_string())
 }

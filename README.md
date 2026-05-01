@@ -1,174 +1,100 @@
-# Local Client MTGA Stat Assistant
+# MTGA Stat Assistant
 
-A lightweight desktop companion for **Magic: The Gathering Arena** that runs alongside the game on a second monitor. Built with Tauri (Rust + WebView2) for minimal resource usage.
+A lightweight desktop companion for **Magic: The Gathering Arena** that runs alongside the game — designed for a second monitor. Built with Tauri (Rust + React), so it uses minimal CPU and memory.
 
-Reads MTGA's local log file in real time — no network calls, no data uploads, no third-party accounts required.
+Reads MTGA's local log file in real time. No network calls, no account required, no data leaves your machine (except Scryfall API requests for card hover images).
 
----
-
-## Planned Features
-
-### Match Tracking
-- [ ] Win/loss record tracked per deck
-- [ ] Match history with opponent name, format, date, and result
-- [ ] Win rate displayed per deck over configurable time windows (session / 7d / 30d / all-time)
-- [ ] Persistent storage of match history across sessions
-- [ ] Play/draw tracking — record whether you played first or drew first per match (on by default)
-- [ ] Win rate on the play vs on the draw
-- [ ] Coin flip / die roll result tracking per match (on by default)
-- [ ] Win rate when winning vs losing the flip/roll
-
-### Opponent Tracking
-- [ ] Cards played by opponent logged per match (battlefield entries only — hidden hand/library not accessible)
-- [ ] Per-match opponent card history viewable after game ends
-- [ ] Opponent name and avatar/deck commander recorded per match
-
-### Real-Time Draw Odds
-- [ ] Starting deck list loaded automatically from log at match start
-- [ ] Library size tracked in real time as cards are drawn
-- [ ] Probability of drawing a land on next draw (hypergeometric distribution)
-- [ ] Probability of drawing a specific card (or any copy of it) within next N draws
-- [ ] Configurable "watch list" of cards to track odds for during a game
-
-### General
-- [ ] Separate window — designed for a second monitor, not an overlay
-- [ ] Requires "Detailed Logs (Plugin Support)" enabled in MTGA settings (one-time setup)
-- [ ] Windows support (primary)
-- [ ] macOS support (planned)
-- [ ] No MTGA account login required — local log only
-- [ ] Export full match history to JSON
-
-### Deck History
-- [ ] Deck list snapshot saved per session (off by default, user-configurable)
-  - MTGA reports all current deck lists on every launch — this feature captures and stores those snapshots over time
-  - Useful for tracking how decks evolve, and as input for the future aggregation project
-
-### Data & Storage
-- [ ] SQLite database for persistent match history (zero install overhead — bundled in app binary)
-- [ ] Automatic `.bak` file created on each app launch (on by default, user-configurable)
-- [ ] JSON export for portability and use with external analysis tools
+> **Windows only.** MTGA Arena does not have a Mac or Linux client.
 
 ---
 
-## Status
+## Features
 
-| Module | Status |
-|---|---|
-| Project scaffold | Complete |
-| Log file tailer (Rust, 250ms poll) | Complete |
-| Log segmenter | Complete |
-| Router (chunk classifier) | Complete |
-| Match start/end events | Complete |
-| Deck list extraction (ConnectResp + SubmitDeckReq) | Complete |
-| Zone change tracking | Complete |
-| Commander tax tracking | Complete |
-| Commander return tracking (SBA) | Complete |
-| Shuffle / instance ID invalidation | Complete |
-| Bo3 game boundary events (IntermissionReq) | Complete |
-| Die roll result events | Complete |
-| Deck snapshot extraction (CourseData) | Complete |
-| SQLite DB layer | Complete |
-| Match/game/opponent-card persistence | Complete |
-| W/L stats + match history Tauri commands | Complete |
-| Frontend scaffold (React + Tailwind v4) | Complete |
-| Status bar + theme toggle | Complete |
-| Win/loss tracker UI | Complete (basic) |
-| Match history UI | Complete (basic) |
-| In-game two-column layout | Complete (skeleton) |
-| Opponent card log UI | Complete (shows grpIds; needs name lookup) |
-| Card name lookup (MTGA local data) | Not started |
-| Draw odds calculator (Rust) | Not started |
-| Draw odds UI | Not started |
-| Settings / configuration UI | Not started |
-| DB backup on launch | Not started |
-| JSON export | Not started |
+**Match tracking**
+- Win/loss record per deck, with overall win rate
+- Full match history — opponent name, format, deck, date, result
+- Play-order tracking: win rate when going first vs second
+- Automatic deck correlation — matches are linked to the deck you registered
 
----
+**In-game overlay** (second monitor)
+- Live library view with per-card draw probability
+- Known top-of-library detection (scry, surveil, tutor effects)
+- Land count and P(land on next draw), updating as cards are drawn
+- Cards you've played this game
+- Cards your opponent has revealed
+- Commander tax tracker (Commander / Brawl formats)
+- Bo3 intermission banner with current game score
 
-## Tech Stack
+**Deck browser**
+- Snapshot of all your current MTGA decks
+- Sort by mana cost or alphabetically, lands at bottom
+- Mana cost column with full symbol notation ({2}{W} etc.)
 
-| Layer | Technology |
-|---|---|
-| Backend | Rust |
-| Desktop shell | Tauri 2.x |
-| Frontend | HTML / CSS / TypeScript |
-| Log watching | Rust (polling, 250ms interval) |
-| Probability math | Rust (hypergeometric distribution) |
-| Local storage | SQLite via `rusqlite` |
-| Frontend framework | React 19 + TypeScript + Tailwind CSS v4 |
+**Card images**
+- Hover any card name anywhere in the app to see its art
+- Toggle between Scryfall and Gatherer as the image source (Settings)
+- Arena-only rebalanced cards (A- prefix) fall back gracefully
+
+**Data**
+- Export full match history to JSON (Save As dialog)
+- SQLite database stored locally at `%APPDATA%\local-client-mtga-stat-assistant\`
+- Auto-backup of the database on user switch
 
 ---
 
 ## Prerequisites
 
-To run from source you will need:
-
-- [Rust](https://rustup.rs/) (1.75+)
+- [Rust](https://rustup.rs/) (stable, 1.75+)
 - [Node.js](https://nodejs.org/) (18+)
-- [Tauri prerequisites for your platform](https://tauri.app/start/prerequisites/)
-- MTG Arena installed with **Detailed Logs (Plugin Support)** enabled
-  - In MTGA: `Options → Account → Detailed Logs (Plugin Support) → ON`
+- [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/) — on Windows this means the Visual Studio C++ build tools and WebView2 (already installed on Windows 11)
+- MTGA installed with **Detailed Logs** enabled:
+  `Options → View Account → Detailed Logs (Plugin Support) → ON`
 
 ---
 
-## Getting Started
+## Building from source
 
-> Setup instructions will be added once the initial scaffold is complete.
+```bash
+git clone https://github.com/KCS-LLC/local-client-mtga-stat-assistant.git
+cd local-client-mtga-stat-assistant
+npm install
+npm run tauri dev      # development build with hot reload
+npm run tauri build    # production build + installer
+```
+
+The production installer is written to `src-tauri/target/release/bundle/`.
 
 ---
 
-## Log File Location
+## Log file location
 
-| Platform | Path |
-|---|---|
-| Windows | `%AppData%\..\LocalLow\Wizards Of The Coast\MTGA\Player.log` |
-| macOS | `~/Library/Logs/Wizards Of The Coast/MTGA/Player.log` |
+The app auto-detects the log at:
+
+```
+%APPDATA%\..\LocalLow\Wizards Of The Coast\MTGA\Player.log
+```
+
+No configuration needed.
 
 ---
 
-## Architecture Decisions
+## MTGA card database
 
-| Decision | Choice | Reason |
-|---|---|---|
-| Frontend → backend comms | Tauri Events (push model) | Log stream is push by nature — Rust emits, React listens |
-| Storage | SQLite via `rusqlite` | Zero user-facing install, handles years of match data at ~2-3MB/year |
-| DB backup | Single `.bak` on launch, on by default | Corruption recovery without fragmenting history |
-| DB rotation | Not implemented — unnecessary at expected data volumes | See size analysis below |
-| Aggregation | Separate future project | Local client stays offline and lightweight; aggregation is opt-in |
-
-### Settings table
-
-Stored as key/value rows in SQLite. Defaults seeded on first launch:
+Card names, mana costs, and CMC are loaded from MTGA's local SQLite database:
 
 ```
-settings
-├── player_id             (string)  — MTGA userId; auto-detected from first match, user-editable
-├── backup_on_launch      (boolean) — default: true
-├── track_deck_history    (boolean) — default: false
-├── track_play_draw       (boolean) — default: true
-├── track_flip_roll       (boolean) — default: true
+<MTGA install drive>:\Program Files\Wizards of the Coast\MTGA\MTGA_Data\Downloads\Raw\Raw_CardDatabase_*.mtga
 ```
 
-DB location: `%APPDATA%\local-client-mtga-stat-assistant\stats.db`
-
-### Database schema
-
-```
-matches         — one row per match (format, players, deck, result, die roll, play/draw)
-games           — one row per game within a match (game_number, winning_team_id)
-opponent_cards  — one row per unique card seen on opponent's battlefield per game
-settings        — key/value configuration
-```
-
-### Why not rotate the database by date or match count?
-
-At ~2-3MB per year of serious play, the database will never approach a size that causes performance issues. Rotation would fragment match history and complicate cross-period queries. Instead, the app keeps one rolling `.bak` file for corruption recovery and provides a JSON export for users who want to archive or share their data.
+The app scans drive letters C–Z so non-default install locations work automatically. If MTGA isn't installed, card IDs display as `Card #12345` instead of names — everything else still works.
 
 ---
 
-## Contributing
+## Data & privacy
 
-Contributions are welcome. Please open an issue before starting work on a significant feature so we can discuss approach and avoid duplicate effort.
+- All data stays on your machine.
+- The only outbound requests are to the [Scryfall API](https://scryfall.com/docs/api) for card hover images, and only when you hover a card name. You can switch to Gatherer (which uses multiverse IDs from Scryfall's data) or disable hover images by not hovering.
+- No telemetry, no analytics, no accounts.
 
 ---
 
