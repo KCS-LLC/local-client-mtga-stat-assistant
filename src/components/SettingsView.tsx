@@ -21,10 +21,19 @@ export function SettingsView() {
   const [cardImageSource, setCardImageSourceState] = useState<"scryfall" | "gatherer">(
     () => (localStorage.getItem("cardImageSource") as "scryfall" | "gatherer" | null) ?? "scryfall",
   );
+  const [recentDeckLimit, setRecentDeckLimitState] = useState<number>(() => {
+    const saved = parseInt(localStorage.getItem("recentDeckLimit") ?? "5", 10);
+    return Number.isFinite(saved) && saved > 0 ? saved : 5;
+  });
 
   function setCardImageSource(src: "scryfall" | "gatherer") {
     localStorage.setItem("cardImageSource", src);
     setCardImageSourceState(src);
+  }
+
+  function setRecentDeckLimit(n: number) {
+    localStorage.setItem("recentDeckLimit", String(n));
+    setRecentDeckLimitState(n);
   }
 
   function handleCopyLogs() {
@@ -164,6 +173,32 @@ export function SettingsView() {
                   }`}
                 >
                   {src.charAt(0).toUpperCase() + src.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">Decks shown on Stats tab</div>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                How many of your most-recently-played decks appear in the
+                Win/Loss table. Each row still reflects that deck's full
+                history.
+              </p>
+            </div>
+            <div className="flex rounded border border-zinc-200 dark:border-zinc-700 overflow-hidden text-xs shrink-0">
+              {[5, 10, 15, 20].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setRecentDeckLimit(n)}
+                  className={`px-3 py-1 ${
+                    recentDeckLimit === n
+                      ? "bg-zinc-200 dark:bg-zinc-700 font-medium"
+                      : "hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
+                  }`}
+                >
+                  {n}
                 </button>
               ))}
             </div>

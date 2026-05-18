@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { DeckSnapshot } from "../types/db";
+import type { DeckSnapshot, DeckWL } from "../types/db";
 import { useCardInfo, type CardInfo } from "../hooks/useCardNames";
 import { CardName } from "./CardName";
 
@@ -51,6 +51,7 @@ function sortEntries(
 
 export function DeckExplorer({ initialDeckId }: Props) {
   const [decks, setDecks] = useState<DeckSnapshot[]>([]);
+  const [stats, setStats] = useState<DeckWL[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(
     initialDeckId ?? null,
   );
@@ -58,6 +59,12 @@ export function DeckExplorer({ initialDeckId }: Props) {
   const [sortMode, setSortModeState] = useState<SortMode>(
     () => (localStorage.getItem("deckSortMode") as SortMode | null) ?? "cmc",
   );
+
+  const wlByName = useMemo(() => {
+    const m = new Map<string, DeckWL>();
+    for (const s of stats) m.set(s.deck_name, s);
+    return m;
+  }, [stats]);
 
   function setSortMode(mode: SortMode) {
     localStorage.setItem("deckSortMode", mode);
@@ -72,6 +79,9 @@ export function DeckExplorer({ initialDeckId }: Props) {
         setSelectedId((current) => current ?? d[0]?.deck_id ?? null);
       })
       .catch(() => setLoaded(true));
+    invoke<DeckWL[]>("get_wl_stats")
+      .then(setStats)
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -116,18 +126,25 @@ export function DeckExplorer({ initialDeckId }: Props) {
           <ul className="space-y-1 text-sm max-h-[70vh] overflow-auto">
             {decks.map((d) => {
               const active = d.deck_id === selectedId;
+              const wl = wlByName.get(d.deck_name);
+              const total = (wl?.wins ?? 0) + (wl?.losses ?? 0);
               return (
                 <li key={d.deck_id}>
                   <button
                     type="button"
                     onClick={() => setSelectedId(d.deck_id)}
-                    className={`w-full text-left px-2 py-1 rounded ${
+                    className={`w-full text-left px-2 py-1 rounded flex items-center justify-between gap-2 ${
                       active
                         ? "bg-zinc-200 dark:bg-zinc-800 font-medium"
                         : "hover:bg-zinc-100 dark:hover:bg-zinc-900"
                     }`}
                   >
-                    {d.deck_name}
+                    <span className="truncate min-w-0">{d.deck_name}</span>
+                    {total > 0 && (
+                      <span className="text-xs text-zinc-500 tabular-nums shrink-0">
+                        {wl!.wins}–{wl!.losses}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
@@ -138,8 +155,21 @@ export function DeckExplorer({ initialDeckId }: Props) {
         <section className="col-span-2">
           {selected ? (
             <>
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-lg font-semibold truncate">{selected.deck_name}</h2>
+              <div className="mb-3 flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold truncate">{selected.deck_name}</h2>
+                  {(() => {
+                    const wl = wlByName.get(selected.deck_name);
+                    const total = (wl?.wins ?? 0) + (wl?.losses ?? 0);
+                    if (total === 0) return null;
+                    const rate = Math.round((wl!.wins / total) * 100);
+                    return (
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        {wl!.wins} wins · {wl!.losses} losses · {rate}% win rate
+                      </p>
+                    );
+                  })()}
+                </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-xs text-zinc-500">
                     {totalCards} cards · {entries.length} unique

@@ -9,6 +9,10 @@ interface Props {
 export function OutOfGameView({ onOpenDeck }: Props) {
   const [stats, setStats] = useState<DeckWL[]>([]);
   const [history, setHistory] = useState<MatchRecord[]>([]);
+  const [recentDeckLimit] = useState<number>(() => {
+    const saved = parseInt(localStorage.getItem("recentDeckLimit") ?? "5", 10);
+    return Number.isFinite(saved) && saved > 0 ? saved : 5;
+  });
 
   useEffect(() => {
     invoke<DeckWL[]>("get_wl_stats")
@@ -18,6 +22,20 @@ export function OutOfGameView({ onOpenDeck }: Props) {
       .then(setHistory)
       .catch(() => {});
   }, []);
+
+  const lastPlayedByDeck = new Map<string, number>();
+  for (const m of history) {
+    if (!m.deck_name) continue;
+    const cur = lastPlayedByDeck.get(m.deck_name) ?? 0;
+    if (m.started_at > cur) lastPlayedByDeck.set(m.deck_name, m.started_at);
+  }
+  const visibleStats = [...stats]
+    .sort(
+      (a, b) =>
+        (lastPlayedByDeck.get(b.deck_name) ?? 0) -
+        (lastPlayedByDeck.get(a.deck_name) ?? 0),
+    )
+    .slice(0, recentDeckLimit);
 
   // Compute going-first/second W/L from match history
   const firstRecord = { wins: 0, losses: 0 };
@@ -47,7 +65,7 @@ export function OutOfGameView({ onOpenDeck }: Props) {
               </tr>
             </thead>
             <tbody>
-              {stats.map((s) => {
+              {visibleStats.map((s) => {
                 const total = s.wins + s.losses;
                 const rate = total > 0 ? Math.round((s.wins / total) * 100) : 0;
                 return (
