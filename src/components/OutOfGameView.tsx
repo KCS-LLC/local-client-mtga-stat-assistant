@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { DeckWL, MatchRecord } from "../types/db";
+import type { DeckWL, MatchRecord, PlayOrderWL } from "../types/db";
 
 interface Props {
   onOpenDeck?: (deckId: string) => void;
@@ -9,6 +9,7 @@ interface Props {
 export function OutOfGameView({ onOpenDeck }: Props) {
   const [stats, setStats] = useState<DeckWL[]>([]);
   const [history, setHistory] = useState<MatchRecord[]>([]);
+  const [playOrder, setPlayOrder] = useState<PlayOrderWL | null>(null);
   const [recentDeckLimit] = useState<number>(() => {
     const saved = parseInt(localStorage.getItem("recentDeckLimit") ?? "5", 10);
     return Number.isFinite(saved) && saved > 0 ? saved : 5;
@@ -20,6 +21,9 @@ export function OutOfGameView({ onOpenDeck }: Props) {
       .catch(() => {});
     invoke<MatchRecord[]>("get_match_history")
       .then(setHistory)
+      .catch(() => {});
+    invoke<PlayOrderWL>("get_play_order_stats")
+      .then(setPlayOrder)
       .catch(() => {});
   }, []);
 
@@ -37,15 +41,8 @@ export function OutOfGameView({ onOpenDeck }: Props) {
     )
     .slice(0, recentDeckLimit);
 
-  // Compute going-first/second W/L from match history
-  const firstRecord = { wins: 0, losses: 0 };
-  const secondRecord = { wins: 0, losses: 0 };
-  for (const m of history) {
-    if (m.played_first === null || (m.result !== "Win" && m.result !== "Loss")) continue;
-    const bucket = m.played_first ? firstRecord : secondRecord;
-    if (m.result === "Win") bucket.wins++;
-    else bucket.losses++;
-  }
+  const firstRecord = playOrder ? { wins: playOrder.first_wins, losses: playOrder.first_losses } : { wins: 0, losses: 0 };
+  const secondRecord = playOrder ? { wins: playOrder.second_wins, losses: playOrder.second_losses } : { wins: 0, losses: 0 };
   const hasPlayOrder = firstRecord.wins + firstRecord.losses + secondRecord.wins + secondRecord.losses > 0;
 
   return (

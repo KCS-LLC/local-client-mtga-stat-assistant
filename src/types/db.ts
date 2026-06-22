@@ -16,6 +16,13 @@ export interface MatchRecord {
   started_at: number;
 }
 
+export interface PlayOrderWL {
+  first_wins: number;
+  first_losses: number;
+  second_wins: number;
+  second_losses: number;
+}
+
 export interface DeckSnapshot {
   deck_id: string;
   deck_name: string;

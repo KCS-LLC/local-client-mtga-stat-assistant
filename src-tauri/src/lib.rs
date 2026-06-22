@@ -11,7 +11,7 @@ mod segmenter;
 mod tailer;
 
 use cards::{CardDatabase, CardInfo, SharedCards};
-use db::{DeckSnapshotRecord, DeckWL, MatchRecord};
+use db::{DeckSnapshotRecord, DeckWL, MatchRecord, PlayOrderWL};
 use db_hub::DbHub;
 use event_sink::EventSink;
 use serde::Serialize;
@@ -35,12 +35,16 @@ struct SettingsSnapshot {
 }
 
 #[tauri::command]
-fn launch_mtga(path: Option<String>) -> Result<(), String> {
-    mtga_process::launch(path.as_deref())
+fn launch_mtga(path: Option<String>) -> Result<bool, String> {
+    mtga_process::launch(path.as_deref())?;
+    // Wait a brief moment for the process to actually appear in the OS process list
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    Ok(mtga_process::is_running())
 }
 
 #[tauri::command]
 fn get_mtga_status() -> bool {
+    // Perform a fresh check instead of relying on any cached state
     mtga_process::is_running()
 }
 
@@ -50,6 +54,20 @@ fn get_wl_stats(hub: State<Arc<Mutex<DbHub>>>) -> Result<Vec<DeckWL>, String> {
     match hub.db() {
         Some(db) => db.get_wl_stats().map_err(|e| e.to_string()),
         None => Ok(vec![]),
+    }
+}
+
+#[tauri::command]
+fn get_play_order_stats(hub: State<Arc<Mutex<DbHub>>>) -> Result<PlayOrderWL, String> {
+    let hub = hub.lock().map_err(|e| e.to_string())?;
+    match hub.db() {
+        Some(db) => db.get_play_order_stats().map_err(|e| e.to_string()),
+        None => Ok(PlayOrderWL {
+            first_wins: 0,
+            first_losses: 0,
+            second_wins: 0,
+            second_losses: 0,
+        }),
     }
 }
 
@@ -275,7 +293,8 @@ fn default_app_root() -> std::path::PathBuf {
 fn watch_log(app_handle: tauri::AppHandle, hub: Arc<Mutex<DbHub>>, cards: SharedCards) {
     thread::spawn(move || {
         let log_path = default_log_path();
-        let mtga_was_running = mtga_process::is_running();
+        let mut sys = sysinfo::System::new();
+        let mtga_was_running = mtga_process::is_running_with_sys(&mut sys);
 
         dlog!("[startup] log path: {:?}", log_path);
         dlog!("[startup] log exists: {}", log_path.exists());
@@ -286,7 +305,7 @@ fn watch_log(app_handle: tauri::AppHandle, hub: Arc<Mutex<DbHub>>, cards: Shared
         if !mtga_was_running {
             loop {
                 thread::sleep(Duration::from_secs(1));
-                if mtga_process::is_running() {
+                if mtga_process::is_running_with_sys(&mut sys) {
                     dlog!("[startup] mtga process detected");
                     let _ = app_handle.emit("mtga_status", true);
                     while !log_path.exists() {
@@ -340,6 +359,38 @@ fn watch_log(app_handle: tauri::AppHandle, hub: Arc<Mutex<DbHub>>, cards: Shared
     });
 }
 
+fn spawn_status_poller(app_handle: tauri::AppHandle) {
+    thread::spawn(move || {
+        let mut sys = sysinfo::System::new();
+        let mut iteration: u64 = 0;
+        
+        let mut last_status = mtga_process::is_running_with_sys(&mut sys);
+        dlog!("[status] Initial MTGA status: {}", last_status);
+        
+        // Force an initial emit to ensure frontend is in sync
+        let _ = app_handle.emit("mtga_status", last_status);
+        
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            iteration += 1;
+            
+            let current = mtga_process::is_running_with_sys(&mut sys);
+            if current != last_status {
+                dlog!("[status] MTGA running status changed: {} -> {}", last_status, current);
+                if let Err(e) = app_handle.emit("mtga_status", current) {
+                    dlog!("[status] Failed to emit mtga_status: {}", e);
+                }
+                last_status = current;
+            } else if iteration % 30 == 0 {
+                // Heartbeat every 30s
+                dlog!("[status] heartbeat: running={}", current);
+                // Also re-emit just in case the frontend missed it or reset
+                let _ = app_handle.emit("mtga_status", current);
+            }
+        }
+    });
+}
+
 fn default_debug_log_path() -> std::path::PathBuf {
     default_app_root().join("debug.log")
 }
@@ -378,12 +429,14 @@ pub fn run() {
             let hub = app.state::<Arc<Mutex<DbHub>>>().inner().clone();
             let cards = app.state::<SharedCards>().inner().clone();
             watch_log(app.handle().clone(), hub, cards);
+            spawn_status_poller(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             launch_mtga,
             get_mtga_status,
             get_wl_stats,
+            get_play_order_stats,
             get_match_history,
             get_decks,
             get_card_info,

@@ -15,6 +15,14 @@ pub struct DeckWL {
 }
 
 #[derive(Debug, Serialize)]
+pub struct PlayOrderWL {
+    pub first_wins: u32,
+    pub first_losses: u32,
+    pub second_wins: u32,
+    pub second_losses: u32,
+}
+
+#[derive(Debug, Serialize)]
 pub struct MatchRecord {
     pub match_id: String,
     pub format: String,
@@ -466,6 +474,27 @@ impl Db {
             })
         })?;
         rows.collect()
+    }
+
+    pub fn get_play_order_stats(&self) -> Result<PlayOrderWL> {
+        self.conn.query_row(
+            "SELECT
+               SUM(CASE WHEN played_first = 1 AND result = 'Win'  THEN 1 ELSE 0 END),
+               SUM(CASE WHEN played_first = 1 AND result = 'Loss' THEN 1 ELSE 0 END),
+               SUM(CASE WHEN played_first = 0 AND result = 'Win'  THEN 1 ELSE 0 END),
+               SUM(CASE WHEN played_first = 0 AND result = 'Loss' THEN 1 ELSE 0 END)
+             FROM matches
+             WHERE played_first IS NOT NULL AND result IS NOT NULL",
+            [],
+            |row| {
+                Ok(PlayOrderWL {
+                    first_wins: row.get::<_, Option<u32>>(0)?.unwrap_or(0),
+                    first_losses: row.get::<_, Option<u32>>(1)?.unwrap_or(0),
+                    second_wins: row.get::<_, Option<u32>>(2)?.unwrap_or(0),
+                    second_losses: row.get::<_, Option<u32>>(3)?.unwrap_or(0),
+                })
+            },
+        )
     }
 
     /// Wipe match-related data (matches, games, opponent_cards) but keep
