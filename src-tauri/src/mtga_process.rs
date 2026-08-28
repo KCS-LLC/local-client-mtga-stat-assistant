@@ -7,6 +7,10 @@ const MTGA_PROCESS: &str = "MTGA";
 
 pub fn is_running() -> bool {
     let mut sys = System::new();
+    is_running_with_sys(&mut sys)
+}
+
+pub fn is_running_with_sys(sys: &mut System) -> bool {
     sys.refresh_processes(ProcessesToUpdate::All, false);
     sys.processes()
         .values()
